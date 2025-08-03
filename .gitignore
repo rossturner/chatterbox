@@ -54,6 +54,9 @@ working_*.wav
 example_*.wav
 test_*.wav
 
+# Virtual environment
+venv/
+
 # Server cache and generated files  
 src/server/storage/cache/
 src/server/storage/outputs/
