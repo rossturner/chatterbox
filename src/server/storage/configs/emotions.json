@@ -1,0 +1,30 @@
+{
+  "emotions": [
+    {
+      "id": "nicole_neutral",
+      "name": "Neutral",
+      "character": "Nicole",
+      "voice_samples": [
+        "nicole_sample_1.wav"
+      ],
+      "exaggeration": 0.5,
+      "description": "Nicole's neutral speaking voice",
+      "created_at": "2024-01-01 00:00:00",
+      "updated_at": "2025-08-03 20:33:53.602887"
+    },
+    {
+      "id": "b189ea1b-6458-4b7d-96ce-03a54050eaf1",
+      "name": "Contemptful",
+      "character": "Nicole",
+      "voice_samples": [
+        "b189ea1b-6458-4b7d-96ce-03a54050eaf1_0_nicole_sample_1.wav.wav",
+        "b189ea1b-6458-4b7d-96ce-03a54050eaf1_1_nicole_sample_1.wav.wav"
+      ],
+      "exaggeration": 0.5,
+      "description": null,
+      "created_at": "2025-08-03 20:37:36.636173",
+      "updated_at": "2025-08-03 20:47:52.721873"
+    }
+  ],
+  "last_updated": "2025-08-03T20:47:52.873492"
+}

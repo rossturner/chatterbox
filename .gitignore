@@ -44,5 +44,18 @@ syn_out/
 checkpoints/
 .gradio
 
-# Ignore generated sample .wav files
-**/*.wav
+/test
+/.idea
+
+# Ignore generated sample .wav files in specific locations
+baseline_*.wav
+mixed_precision_*.wav
+working_*.wav
+example_*.wav
+test_*.wav
+
+# Server cache and generated files  
+src/server/storage/cache/
+src/server/storage/outputs/
+server.log
+server.pid
