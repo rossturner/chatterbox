@@ -245,12 +245,14 @@ async def generate_tts(
         
         # Save or encode audio
         if request.return_audio_data:
-            # Return base64 encoded audio data
+            # Return base64 encoded audio data as proper WAV file
             wav_numpy = wav.squeeze(0).cpu().numpy()
             
-            # Convert to bytes (16-bit PCM)
-            wav_int16 = (wav_numpy * 32767).astype('int16')
-            audio_bytes = wav_int16.tobytes()
+            # Create a proper WAV file in memory using torchaudio
+            import io
+            buffer = io.BytesIO()
+            torchaudio.save(buffer, wav.cpu(), tts_model.sr, format="wav")
+            audio_bytes = buffer.getvalue()
             audio_data = base64.b64encode(audio_bytes).decode('utf-8')
             
             return TTSGenerationResponse(
@@ -446,11 +448,22 @@ async def remove_voice(
     """Remove a voice sample from an emotion profile."""
     try:
         logger.info(f"Attempting to remove voice sample: '{voice_filename}' from emotion: '{emotion_id}'")
+        
+        # Debug: Check if emotion exists
+        emotion = vm.get_emotion(emotion_id)
+        if not emotion:
+            logger.error(f"Emotion '{emotion_id}' not found")
+            raise HTTPException(status_code=404, detail="Emotion not found")
+            
+        logger.info(f"Emotion found: '{emotion.name}' with voice samples: {emotion.voice_samples}")
+        
         success = await vm.remove_voice_sample(emotion_id, voice_filename)
         if not success:
             raise HTTPException(status_code=404, detail="Voice sample not found")
         
         return {"success": True, "message": "Voice sample removed successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Voice removal failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

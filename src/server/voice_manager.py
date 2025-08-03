@@ -265,10 +265,12 @@ class VoiceManager:
         
         emotion = self.emotions[emotion_id]
         
-        # Generate unique filename (remove extension from filename to avoid duplication)
+        # Generate unique filename with shorter UUID prefix (remove extension from filename to avoid duplication)
         file_extension = file_path.suffix
         filename_without_ext = Path(filename).stem
-        sample_filename = f"{emotion_id}_{len(emotion.voice_samples)}_{filename_without_ext}{file_extension}"
+        # Use only first 8 chars of emotion_id for shorter filenames
+        short_emotion_id = emotion_id[:8] if len(emotion_id) > 8 else emotion_id
+        sample_filename = f"{short_emotion_id}_{len(emotion.voice_samples)}_{filename_without_ext}{file_extension}"
         target_path = self.config.get_voice_path(sample_filename)
         
         # Copy file to storage

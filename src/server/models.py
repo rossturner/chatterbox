@@ -18,7 +18,7 @@ class TTSGenerationRequest(BaseModel):
     top_p: float = Field(1.0, ge=0.1, le=1.0, description="Top-P sampling parameter") 
     cfg_weight: float = Field(0.5, ge=0.0, le=1.0, description="Classifier-free guidance weight")
     seed: Optional[int] = Field(None, description="Random seed for reproducible generation")
-    return_audio_data: bool = Field(False, description="Return base64 encoded audio data instead of file")
+    return_audio_data: bool = Field(True, description="Return base64 encoded audio data instead of file")
 
 
 class TTSGenerationResponse(BaseModel):

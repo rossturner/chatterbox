@@ -735,14 +735,44 @@
                 });
                 
                 const data = await response.json();
+                console.log('Response data:', data);
                 
                 if (data.success) {
                     const audioOutput = document.getElementById('audio-output');
                     const audioPlayer = document.getElementById('audio-player');
                     const generationInfo = document.getElementById('generation-info');
                     
-                    audioPlayer.src = data.audio_url;
+                    console.log('Audio output element:', audioOutput);
+                    console.log('Audio player element:', audioPlayer);
+                    
+                    // Handle both base64 audio data and file URLs
+                    if (data.audio_data) {
+                        // Base64 audio data - create data URL (simpler approach)
+                        console.log('Base64 data length:', data.audio_data.length);
+                        console.log('Base64 data start:', data.audio_data.substring(0, 50));
+                        const dataUrl = `data:audio/wav;base64,${data.audio_data}`;
+                        audioPlayer.src = dataUrl;
+                        console.log('Set audio source to base64 data URL');
+                        
+                        // Listen for load events
+                        audioPlayer.onloadeddata = () => console.log('Audio data loaded successfully');
+                        audioPlayer.onerror = (e) => console.log('Audio load error:', e);
+                        audioPlayer.oncanplay = () => console.log('Audio can play');
+                    } else if (data.audio_url) {
+                        // File URL (fallback)
+                        audioPlayer.src = data.audio_url;
+                        console.log('Set audio source to file URL:', data.audio_url);
+                    } else {
+                        console.log('No audio data or URL in response');
+                    }
+                    
                     audioOutput.classList.remove('hidden');
+                    
+                    // Auto-play the generated audio
+                    audioPlayer.play().catch(error => {
+                        console.log('Auto-play failed:', error);
+                        showAlert('generation-alerts', 'Speech generated successfully! Click play to listen.', 'success');
+                    });
                     
                     generationInfo.innerHTML = `
                         <div><strong>Duration:</strong> ${data.duration_seconds.toFixed(2)}s</div>
@@ -751,7 +781,7 @@
                         <div><strong>Device:</strong> ${data.metadata.device}</div>
                     `;
                     
-                    showAlert('generation-alerts', 'Speech generated successfully!', 'success');
+                    showAlert('generation-alerts', 'Speech generated and playing!', 'success');
                 } else {
                     showAlert('generation-alerts', 'Generation failed: ' + data.error, 'error');
                 }
