@@ -42,6 +42,36 @@ This is a streaming TTS (Text-to-Speech) implementation of Chatterbox, featuring
 
 Both training scripts expect audio files in `audio_data/` directory and generate training metrics visualizations.
 
+## GRPO Fine-tuned Model
+
+This repository includes a GRPO (Group Relative Policy Optimization) fine-tuned model that has been optimized for improved performance. The GRPO training process enhances the base model's ability to generate high-quality speech while maintaining reasonable computational requirements.
+
+### Quantized Model Variants
+
+The GRPO fine-tuned model has been quantized using multiple techniques to reduce memory usage while maintaining quality:
+
+- **Original GRPO**: Full precision model (~3GB, baseline performance)
+- **Float16 Weights**: Half-precision quantization (~1.5GB, 50% size reduction, 27% VRAM reduction)
+- **Mixed Precision**: Strategic precision reduction (~1.5GB, similar performance to float16)
+
+### Model Performance Comparison
+
+Performance metrics on RTX 4090 with creative test content:
+
+| Model | Size (MB) | Peak VRAM (GB) | Avg RTF | Avg Gen Time (s) | Quality |
+|-------|-----------|----------------|---------|------------------|---------|
+| Original GRPO | 3045 | 4.97 | 0.77 | 8.35 | Baseline |
+| Float16 Weights | 1523 | 3.62 | 0.74 | 8.17 | Excellent |
+| Mixed Precision | 1523 | 3.61 | 0.76 | 8.24 | Excellent |
+
+All quantized variants maintain excellent speech quality while achieving significant memory savings. The quantized models are located in `quantized_models/` directory.
+
+### Testing Framework
+
+- `test_models_final.py`: Comprehensive testing script with creative content and multiple reference voices
+- `final_model_comparison/`: Generated audio samples and performance metrics
+- Testing uses consistent seed (42) across all models for reproducible comparisons
+
 ## Usage Examples
 
 Key example files demonstrate the streaming capabilities:

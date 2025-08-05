@@ -43,6 +43,7 @@ pip-delete-this-directory.txt
 syn_out/
 checkpoints/
 checkpoints_grpo/
+quantized_models/
 .venv/
 .idea/
 .gradio
