@@ -15,6 +15,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import librosa
+import soundfile as sf
 import numpy as np
 from tqdm import tqdm
 from huggingface_hub import hf_hub_download
@@ -38,24 +39,24 @@ import threading
 import time
 from collections import deque
 
-# Hardcoded configuration
+# Hardcoded configuration - OPTIMIZED FOR YOUR DATASET
 AUDIO_DATA_DIR = "./audio_data"
-BATCH_SIZE = 1
-EPOCHS = 10
-LEARNING_RATE = 2e-5  
-WARMUP_STEPS = 500 
-MAX_AUDIO_LENGTH = 400.0  
+BATCH_SIZE = 2  # Increased from 1 - you have plenty of GPU memory
+EPOCHS = 12  # Increased slightly for better convergence with your large dataset
+LEARNING_RATE = 3e-5  # Slightly higher - good dataset allows faster learning
+WARMUP_STEPS = 300  # Reduced - smaller warmup for your dataset size
+MAX_AUDIO_LENGTH = 15.0  # Reduced from 400s - your files are 5-13s, saves memory
 MIN_AUDIO_LENGTH = 1.0
 LORA_RANK = 32  
 LORA_ALPHA = 64  
-LORA_DROPOUT = 0.05  
-GRADIENT_ACCUMULATION_STEPS = 8
-SAVE_EVERY_N_STEPS = 200
+LORA_DROPOUT = 0.15  # Increased dropout to reduce overfitting  
+GRADIENT_ACCUMULATION_STEPS = 4  # Reduced since we increased batch size
+SAVE_EVERY_N_STEPS = 150  # More frequent saves with larger dataset
 CHECKPOINT_DIR = "checkpoints_lora"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 WHISPER_MODEL = "openai/whisper-large-v3-turbo"
 MAX_TEXT_LENGTH = 1000
-VALIDATION_SPLIT = 0.1
+VALIDATION_SPLIT = 0.2  # Larger validation set for better generalization
 
 # Metrics tracking class
 class MetricsTracker:
@@ -418,7 +419,9 @@ class TTSDataset(Dataset):
         sample = self.samples[idx]
         
         # Load and process audio - keep original length logic
-        audio, sr = librosa.load(sample.audio_path, sr=self.s3gen_sr)
+        audio, sr = sf.read(sample.audio_path)
+        if sr != self.s3gen_sr:
+            audio = librosa.resample(audio, orig_sr=sr, target_sr=self.s3gen_sr)
         
         audio = librosa.util.normalize(audio)
         
@@ -548,10 +551,14 @@ def compute_loss(
     # Pad text tokens to same length
     max_text_len = max(t.size(-1) for t in text_tokens_list)
     text_tokens_padded = []
+    
+    # Get pad token id from the tokenizer vocabulary
+    pad_token_id = model.tokenizer.tokenizer.get_vocab().get('[PAD]', 0)
+    
     for t in text_tokens_list:
         pad_amount = max_text_len - t.size(-1)
         if pad_amount > 0:
-            padded = F.pad(t, (0, pad_amount), value=model.tokenizer.pad_token_id or 0)
+            padded = F.pad(t, (0, pad_amount), value=pad_token_id)
         else:
             padded = t
         text_tokens_padded.append(padded)
@@ -988,9 +995,10 @@ def load_audio_samples(audio_dir: str, whisper_model) -> List[AudioSample]:
    
    for audio_path in tqdm(audio_files, desc="Processing audio"):
        try:
-           # Load audio for duration check
-           audio, sr = librosa.load(audio_path, sr=None)
-           duration = len(audio) / sr
+           # Load audio for duration check - use soundfile instead of librosa
+           info = sf.info(audio_path)
+           duration = info.frames / info.samplerate
+           sr = info.samplerate
            
            # Skip if too short or too long
            if duration < MIN_AUDIO_LENGTH or duration > MAX_AUDIO_LENGTH:

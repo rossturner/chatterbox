@@ -46,7 +46,7 @@ from collections import deque
 
 # Hardcoded configuration
 AUDIO_DATA_DIR = "./audio_data"
-BATCH_SIZE = 10
+BATCH_SIZE = 4
 EPOCHS = 2
 LEARNING_RATE = 1e-5
 WARMUP_STEPS = 500
@@ -1320,7 +1320,7 @@ def main():
             shuffle=True,
             num_workers=num_workers,
             collate_fn=collate_fn,
-            pin_memory=True if DEVICE == 'cuda' else False
+            pin_memory=False  # Disable pin_memory to avoid CUDA OOM
         )
         
         val_loader = DataLoader(
@@ -1329,7 +1329,7 @@ def main():
             shuffle=False,
             num_workers=num_workers,
             collate_fn=collate_fn,
-            pin_memory=True if DEVICE == 'cuda' else False
+            pin_memory=False  # Disable pin_memory to avoid CUDA OOM
         )
         
         lora_params = []
