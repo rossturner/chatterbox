@@ -66,11 +66,24 @@ Performance metrics on RTX 4090 with creative test content:
 
 All quantized variants maintain excellent speech quality while achieving significant memory savings. The quantized models are located in `quantized_models/` directory.
 
-### Testing Framework
+### Performance Testing
 
-- `test_models_final.py`: Comprehensive testing script with creative content and multiple reference voices
-- `final_model_comparison/`: Generated audio samples and performance metrics
-- Testing uses consistent seed (42) across all models for reproducible comparisons
+- `performance_test_harness.py`: Repeatable performance testing script for inference generation
+  - Tests 3 models: Base Chatterbox, GRPO fine-tuned, Mixed precision quantized  
+  - Measures VRAM usage, generation time, and Real-Time Factor (RTF)
+  - Generates 9 test audio files per run with comprehensive performance metrics
+  - Uses consistent seed (42) for reproducible results
+
+**Running the performance test:**
+```bash
+# Activate virtual environment
+source .venv/bin/activate
+
+# Run performance tests (requires CUDA GPU)
+python3 performance_test_harness.py
+```
+
+The test harness randomly selects 3 reference audio files and 3 transcripts (mismatched), then tests each model combination. Results are saved to `./output/` directory with detailed performance comparison tables.
 
 ## Usage Examples
 

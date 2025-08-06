@@ -48,5 +48,6 @@ quantized_models/
 .idea/
 .gradio
 
-# Ignore generated sample .wav files
+# Ignore generated sample .wav files (but allow audio_data/*.wav)
 **/*.wav
+!audio_data/*.wav
