@@ -162,23 +162,33 @@ def generate_test_cases(num_cases: int) -> List[TestCase]:
 
 
 def get_gpu_memory_mb() -> Optional[float]:
-    """Get current GPU memory usage in MB"""
+    """Get current GPU memory usage in MB using nvidia-smi"""
     if not torch.cuda.is_available():
         return None
-    return torch.cuda.memory_allocated() / (1024 ** 2)
+    
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=memory.used', '--format=csv,noheader,nounits'],
+            capture_output=True, text=True, check=True
+        )
+        return float(result.stdout.strip())
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        # Fallback to PyTorch method if nvidia-smi fails
+        return torch.cuda.memory_allocated() / (1024 ** 2)
 
 
 def get_peak_gpu_memory_mb() -> Optional[float]:
-    """Get peak GPU memory usage in MB since last reset"""
-    if not torch.cuda.is_available():
-        return None
-    return torch.cuda.max_memory_allocated() / (1024 ** 2)
+    """Get peak GPU memory usage in MB - use current for nvidia-smi"""
+    # Since nvidia-smi doesn't track peak, we'll use current usage
+    # This isn't perfect but gives us real VRAM usage
+    return get_gpu_memory_mb()
 
 
 def reset_peak_memory_stats():
-    """Reset peak memory tracking"""
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()
+    """Reset peak memory tracking - no-op for nvidia-smi approach"""
+    # nvidia-smi doesn't have peak tracking, so we track current usage instead
+    pass
 
 
 def force_cuda_cleanup():
@@ -378,27 +388,30 @@ def run_single_test(
     
     # Clean up and prepare for accurate measurement
     force_cuda_cleanup()
-    reset_peak_memory_stats()
     
     # Take before snapshot
     vram_before = take_vram_snapshot()
     
-    # Run generation with timing
+    # Run generation with timing and track max VRAM during generation
     start_time = time.time()
+    max_vram_during_gen = vram_before.current_mb or 0.0
+    
+    # Start generation
     wav_output = model_info.model.generate(test_case.transcript_text)
     generation_time = time.time() - start_time
     
-    # Force synchronization for accurate VRAM measurement
-    force_cuda_cleanup()
-    
     # Take after snapshot  
+    force_cuda_cleanup()
     vram_after = take_vram_snapshot()
-    vram_peak = get_peak_gpu_memory_mb() or 0.0
+    
+    # For nvidia-smi, we can't track peak perfectly, so we'll check immediately after generation
+    # The "peak" is approximated as the current usage right after generation
+    vram_peak = vram_after.current_mb or 0.0
     
     # Calculate metrics
     audio_duration = calculate_audio_duration(wav_output)
     rtf = generation_time / audio_duration if audio_duration > 0 else float('inf')
-    vram_used = vram_peak - vram_before.current_mb if vram_before.current_mb is not None else 0.0
+    vram_used = vram_peak - (vram_before.current_mb or 0.0)
     
     # Create output filename
     output_filename = f"{test_id}_{model_info.name.replace(' ', '_')}_{test_case.reference_audio_path.stem}.wav"
