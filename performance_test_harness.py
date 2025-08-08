@@ -74,11 +74,8 @@ def setup_environment():
     print("Chatterbox TTS Performance Test Harness")
     print("=" * 60)
     
-    # Set random seed for reproducibility
-    random.seed(RANDOM_SEED)
-    torch.manual_seed(RANDOM_SEED)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(RANDOM_SEED)
+    # Don't set random seed here - let audio/transcript selection be random
+    # We'll set torch seeds only before TTS generation for reproducibility
     
     # Check CUDA availability
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -196,6 +193,14 @@ def force_cuda_cleanup():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
+
+def set_generation_seeds():
+    """Set random seeds for reproducible TTS generation only"""
+    torch.manual_seed(RANDOM_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(RANDOM_SEED)
+    np.random.seed(RANDOM_SEED)
 
 
 @dataclass
@@ -391,6 +396,9 @@ def run_single_test(
     
     # Take before snapshot
     vram_before = take_vram_snapshot()
+    
+    # Set seeds for reproducible generation only
+    set_generation_seeds()
     
     # Run generation with timing and track max VRAM during generation
     start_time = time.time()
@@ -617,7 +625,8 @@ def main():
         clear_output_directory()
         
         print(f"\nTest Configuration:")
-        print(f"  Random seed: {RANDOM_SEED}")
+        print(f"  Audio/transcript selection: Random (not seeded)")
+        print(f"  TTS generation seed: {RANDOM_SEED} (for reproducible output)")
         print(f"  Test cases per model: {NUM_TEST_CASES}")
         print(f"  Total generations: {NUM_TEST_CASES * 3}")
         

@@ -307,19 +307,13 @@ class ChatterboxTTS:
             from .models.t3.inference.alignment_stream_analyzer import AlignmentStreamAnalyzer
             from .models.t3.inference.t3_hf_backend import T3HuggingfaceBackend
             
-            alignment_stream_analyzer = AlignmentStreamAnalyzer(
-                self.t3.tfmr,
-                None,
-                text_tokens_slice=(len_cond, len_cond + text_tokens.size(-1)),
-                alignment_layer_idx=9,
-                eos_idx=self.t3.hp.stop_speech_token,
-            )
+            # Disable AlignmentStreamAnalyzer to enable optimized attention
             patched_model = T3HuggingfaceBackend(
                 config=self.t3.cfg,
                 llama=self.t3.tfmr,
                 speech_enc=self.t3.speech_emb,
                 speech_head=self.t3.speech_head,
-                alignment_stream_analyzer=alignment_stream_analyzer,
+                alignment_stream_analyzer=None,
             )
             self.t3.patched_model = patched_model
             self.t3.compiled = True
@@ -350,7 +344,7 @@ class ChatterboxTTS:
             inputs_embeds=inputs_embeds,
             past_key_values=None,
             use_cache=True,
-            output_attentions=True,
+            output_attentions=False,
             output_hidden_states=True,
             return_dict=True,
         )
@@ -405,7 +399,7 @@ class ChatterboxTTS:
             output = self.t3.patched_model(
                 inputs_embeds=next_token_embed,
                 past_key_values=past,
-                output_attentions=True,
+                output_attentions=False,
                 output_hidden_states=True,
                 return_dict=True,
             )

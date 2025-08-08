@@ -4,16 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Setup
 
+**⚠️ IMPORTANT: Always use the project's virtual environment (.venv) which has Python 3.10.12**
+
 ```bash
-# Create virtual environment (Python 3.8+ required, tested with Python 3.13)
-python3 -m venv .venv
+# ALWAYS activate the virtual environment first (Python 3.10.12)
 source .venv/bin/activate
+
+# Verify you're using the correct Python version
+python --version  # Should show Python 3.10.12
 
 # Install for development with all dependencies
 pip install -e .
 ```
 
-**Note**: Installation includes PyTorch with CUDA 12.4 support and many ML dependencies (~4GB total). The package installs successfully and imports without errors.
+**Note**: 
+- The virtual environment uses Python 3.10.12 (NOT the system Python)
+- Always activate `.venv` before running any commands
+- Installation includes PyTorch with CUDA 12.4 support and many ML dependencies (~4GB total)
+- The package installs successfully and imports without errors
 
 ## Core Architecture
 

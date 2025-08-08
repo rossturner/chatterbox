@@ -249,24 +249,16 @@ class T3(nn.Module):
         # In order to use the standard HF generate method, we need to extend some methods to inject our custom logic
         # Note the llama-specific logic. Other tfmr types can be added later.
 
-        self.compiled = False
-
         # TODO? synchronize the expensive compile function
         # with self.compile_lock:
         if not self.compiled:
-            alignment_stream_analyzer = AlignmentStreamAnalyzer(
-                self.tfmr,
-                None,
-                text_tokens_slice=(len_cond, len_cond + text_tokens.size(-1)),
-                alignment_layer_idx=9, # TODO: hparam or something?
-                eos_idx=self.hp.stop_speech_token,
-            )
+            # Disable AlignmentStreamAnalyzer to enable optimized attention
             patched_model = T3HuggingfaceBackend(
                 config=self.cfg,
                 llama=self.tfmr,
                 speech_enc=self.speech_emb,
                 speech_head=self.speech_head,
-                alignment_stream_analyzer=alignment_stream_analyzer,
+                alignment_stream_analyzer=None,
             )
             self.patched_model = patched_model
             self.compiled = True
@@ -313,7 +305,7 @@ class T3(nn.Module):
             inputs_embeds=inputs_embeds,
             past_key_values=None,
             use_cache=True,
-            output_attentions=True,
+            output_attentions=False,
             output_hidden_states=True,
             return_dict=True,
         )
@@ -360,7 +352,7 @@ class T3(nn.Module):
             output = self.patched_model(
                 inputs_embeds=next_token_embed,
                 past_key_values=past,
-                output_attentions=True,
+                output_attentions=False,
                 output_hidden_states=True,
                 return_dict=True,
             )
