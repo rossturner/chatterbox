@@ -1,0 +1,35 @@
+server:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1  # MUST be 1 for single model instance
+  request_timeout: 30  # seconds
+  busy_timeout: 1.0  # seconds to wait for lock
+  
+model:
+  type: "grpo"  # "base", "grpo", or "quantized"
+  path: "./checkpoints_grpo/merged_grpo_model"  # for local models
+  device: "cuda"
+  keep_warm: true  # Keep model warm between requests
+  
+generation:
+  default_temperature: 0.8
+  default_cfg_weight: 0.5
+  max_text_length: 500
+  use_cuda_graphs: false  # Disable for now, can enable later
+  
+caching:
+  precompute_on_startup: true
+  save_conditionals: true  # Save to disk for faster restarts
+  conditionals_dir: "./conditionals_cache"
+  batch_size: 5  # Number of conditionals to prepare at once
+  
+streaming:
+  enabled: false  # Disabled for simpler single-request mode
+  default_chunk_size: 25
+  default_context_window: 50
+  fade_duration: 0.02
+  
+performance:
+  pin_memory: true  # Use pinned memory for transfers
+  torch_compile: false  # Disable for now to avoid complexity
+  single_request_mode: true  # Optimize for single request processing
