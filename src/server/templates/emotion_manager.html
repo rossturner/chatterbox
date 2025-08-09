@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatterbox Emotion Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .main-content {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            min-height: 600px;
+        }
+        
+        .sidebar {
+            background: #f8f9fa;
+            border-right: 1px solid #dee2e6;
+            padding: 20px;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .emotion-list {
+            list-style: none;
+        }
+        
+        .emotion-item {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .emotion-item:hover {
+            background: #e9ecef;
+            transform: translateX(5px);
+        }
+        
+        .emotion-item.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        
+        .emotion-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .emotion-meta {
+            font-size: 0.85em;
+            opacity: 0.8;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5a67d8;
+        }
+        
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #38a169;
+        }
+        
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #e53e3e;
+        }
+        
+        .btn-secondary {
+            background: #718096;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #4a5568;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+        
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #cbd5e0;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .form-group input[type="range"] {
+            padding: 0;
+        }
+        
+        .range-value {
+            display: inline-block;
+            margin-left: 10px;
+            font-weight: 600;
+            color: #667eea;
+        }
+        
+        .voice-samples {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        
+        .voice-sample-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            margin-bottom: 10px;
+        }
+        
+        .voice-sample-name {
+            flex: 1;
+            font-size: 14px;
+        }
+        
+        .voice-sample-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .btn-play {
+            background: #48bb78;
+            color: white;
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+        
+        .btn-play:hover {
+            background: #38a169;
+        }
+        
+        .btn-play.playing {
+            background: #ed8936;
+        }
+        
+        .btn-play.playing:hover {
+            background: #dd6b20;
+        }
+        
+        .test-section {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 30px;
+        }
+        
+        .test-section h3 {
+            margin-bottom: 15px;
+            color: #2d3748;
+        }
+        
+        audio {
+            width: 100%;
+            margin-top: 15px;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            animation: fadeIn 0.3s ease;
+        }
+        
+        .modal-content {
+            background: white;
+            margin: 10% auto;
+            padding: 30px;
+            width: 90%;
+            max-width: 500px;
+            border-radius: 12px;
+            animation: slideDown 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        @keyframes slideDown {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(102, 126, 234, 0.3);
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .message {
+            padding: 12px 20px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .message.success {
+            background: #c6f6d5;
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+        
+        .message.error {
+            background: #fed7d7;
+            color: #742a2a;
+            border: 1px solid #fc8181;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #718096;
+        }
+        
+        .empty-state h3 {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎭 Chatterbox Emotion Manager</h1>
+            <p>Manage emotions, voice samples, and test speech synthesis</p>
+        </div>
+        
+        <div class="main-content">
+            <div class="sidebar">
+                <div style="margin-bottom: 20px;">
+                    <button class="btn btn-primary" style="width: 100%;" onclick="showCreateEmotionModal()">
+                        ➕ Create New Emotion
+                    </button>
+                </div>
+                
+                <h3 style="margin-bottom: 15px;">Emotions</h3>
+                <ul class="emotion-list" id="emotionList">
+                    <!-- Emotions will be loaded here -->
+                </ul>
+            </div>
+            
+            <div class="content">
+                <div class="message" id="message"></div>
+                
+                <div id="emotionDetails" style="display: none;">
+                    <h2 id="emotionTitle">Select an Emotion</h2>
+                    
+                    <div class="form-group">
+                        <label>Display Name</label>
+                        <input type="text" id="emotionName" />
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>
+                            Exaggeration Level
+                            <span class="range-value" id="exaggerationValue">0.5</span>
+                        </label>
+                        <input type="range" id="exaggeration" min="0.1" max="2.0" step="0.1" value="0.5" 
+                               oninput="document.getElementById('exaggerationValue').textContent = this.value" />
+                    </div>
+                    
+                    <div class="button-group">
+                        <button class="btn btn-success" onclick="updateEmotion()">💾 Save Changes</button>
+                        <button class="btn btn-danger" onclick="deleteEmotion()">🗑️ Delete Emotion</button>
+                    </div>
+                    
+                    <div class="voice-samples">
+                        <h3>Voice Samples</h3>
+                        <div id="voiceSamplesList">
+                            <!-- Voice samples will be loaded here -->
+                        </div>
+                        
+                        <div style="margin-top: 15px;">
+                            <input type="file" id="voiceUpload" accept=".wav,.mp3,.flac,.ogg" style="display: none;" />
+                            <button class="btn btn-primary" onclick="document.getElementById('voiceUpload').click()">
+                                📁 Upload Voice Sample
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="test-section">
+                        <h3>Test Generation</h3>
+                        
+                        <div class="form-group">
+                            <label>Test Text</label>
+                            <textarea id="testText" rows="2">Hello! This is a test of the emotion voice.</textarea>
+                        </div>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div class="form-group">
+                                <label>Temperature <span class="range-value" id="tempValue">0.8</span></label>
+                                <input type="range" id="temperature" min="0.05" max="5.0" step="0.05" value="0.8"
+                                       oninput="document.getElementById('tempValue').textContent = this.value" />
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>CFG Weight <span class="range-value" id="cfgValue">0.5</span></label>
+                                <input type="range" id="cfgWeight" min="0.2" max="1.0" step="0.05" value="0.5"
+                                       oninput="document.getElementById('cfgValue').textContent = this.value" />
+                            </div>
+                        </div>
+                        
+                        <button class="btn btn-success" onclick="testGeneration()" id="testButton">
+                            🎤 Generate Test Audio
+                        </button>
+                        
+                        <div id="generationInfo" style="margin-top: 15px; padding: 10px; background: #e6f3ff; border-radius: 6px; display: none;">
+                            <strong>Voice Sample Used:</strong> <span id="voiceSampleUsed"></span><br>
+                            <strong>Duration:</strong> <span id="audioDuration"></span> seconds<br>
+                            <strong>RTF:</strong> <span id="audioRTF"></span>
+                        </div>
+                        
+                        <audio id="testAudio" controls style="display: none;"></audio>
+                    </div>
+                </div>
+                
+                <div id="emptyState" class="empty-state">
+                    <h3>No Emotion Selected</h3>
+                    <p>Select an emotion from the sidebar or create a new one to get started.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Create Emotion Modal -->
+    <div id="createModal" class="modal">
+        <div class="modal-content">
+            <h2>Create New Emotion</h2>
+            
+            <div class="form-group">
+                <label>Emotion ID (lowercase, no spaces)</label>
+                <input type="text" id="newEmotionId" placeholder="e.g. excited, calm, serious" />
+            </div>
+            
+            <div class="form-group">
+                <label>Display Name</label>
+                <input type="text" id="newEmotionName" placeholder="e.g. Excited, Calm, Serious" />
+            </div>
+            
+            <div class="form-group">
+                <label>
+                    Initial Exaggeration Level
+                    <span class="range-value" id="newExaggerationValue">0.5</span>
+                </label>
+                <input type="range" id="newExaggeration" min="0.1" max="2.0" step="0.1" value="0.5"
+                       oninput="document.getElementById('newExaggerationValue').textContent = this.value" />
+            </div>
+            
+            <div class="button-group">
+                <button class="btn btn-primary" onclick="createEmotion()">Create</button>
+                <button class="btn btn-secondary" onclick="hideCreateEmotionModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentEmotionId = null;
+        const API_BASE = '';
+        
+        // Load emotions on page load
+        window.onload = function() {
+            loadEmotions();
+            setupVoiceUpload();
+        };
+        
+        function showMessage(text, type = 'success') {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = text;
+            messageEl.className = `message ${type}`;
+            messageEl.style.display = 'block';
+            
+            setTimeout(() => {
+                messageEl.style.display = 'none';
+            }, 5000);
+        }
+        
+        async function loadEmotions() {
+            try {
+                const response = await fetch(`${API_BASE}/emotions/details`);
+                const data = await response.json();
+                
+                const emotionList = document.getElementById('emotionList');
+                emotionList.innerHTML = '';
+                
+                if (data.total === 0) {
+                    emotionList.innerHTML = '<li class="empty-state">No emotions yet</li>';
+                    return;
+                }
+                
+                for (const [id, emotion] of Object.entries(data.emotions)) {
+                    const li = document.createElement('li');
+                    li.className = 'emotion-item';
+                    if (id === currentEmotionId) {
+                        li.classList.add('active');
+                    }
+                    li.onclick = () => selectEmotion(id);
+                    
+                    li.innerHTML = `
+                        <div class="emotion-name">${emotion.name}</div>
+                        <div class="emotion-meta">
+                            ${emotion.voice_samples.length} samples • ${emotion.exaggeration}x
+                        </div>
+                    `;
+                    
+                    emotionList.appendChild(li);
+                }
+            } catch (error) {
+                console.error('Failed to load emotions:', error);
+                showMessage('Failed to load emotions', 'error');
+            }
+        }
+        
+        async function selectEmotion(emotionId) {
+            currentEmotionId = emotionId;
+            
+            // Update active state in list
+            document.querySelectorAll('.emotion-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            event.currentTarget.classList.add('active');
+            
+            // Show details section
+            document.getElementById('emotionDetails').style.display = 'block';
+            document.getElementById('emptyState').style.display = 'none';
+            
+            try {
+                // Load emotion details
+                const response = await fetch(`${API_BASE}/emotions/${emotionId}`);
+                const emotion = await response.json();
+                
+                document.getElementById('emotionTitle').textContent = emotion.name;
+                document.getElementById('emotionName').value = emotion.name;
+                document.getElementById('exaggeration').value = emotion.exaggeration;
+                document.getElementById('exaggerationValue').textContent = emotion.exaggeration;
+                
+                // Load voice samples
+                await loadVoiceSamples(emotionId);
+                
+            } catch (error) {
+                console.error('Failed to load emotion details:', error);
+                showMessage('Failed to load emotion details', 'error');
+            }
+        }
+        
+        async function loadVoiceSamples(emotionId) {
+            try {
+                const response = await fetch(`${API_BASE}/emotions/${emotionId}/voices`);
+                const samples = await response.json();
+                
+                const samplesList = document.getElementById('voiceSamplesList');
+                samplesList.innerHTML = '';
+                
+                if (samples.length === 0) {
+                    samplesList.innerHTML = '<p style="color: #718096;">No voice samples uploaded yet</p>';
+                    return;
+                }
+                
+                samples.forEach(sample => {
+                    const div = document.createElement('div');
+                    div.className = 'voice-sample-item';
+                    div.innerHTML = `
+                        <span class="voice-sample-name">${sample.filename}</span>
+                        <div class="voice-sample-controls">
+                            <button class="btn btn-play" onclick="playVoiceSample('${sample.path}', this)">
+                                ▶️ Play
+                            </button>
+                            <button class="btn btn-danger" onclick="deleteVoiceSample('${sample.path}')">
+                                Remove
+                            </button>
+                        </div>
+                    `;
+                    samplesList.appendChild(div);
+                });
+                
+            } catch (error) {
+                console.error('Failed to load voice samples:', error);
+            }
+        }
+        
+        function setupVoiceUpload() {
+            document.getElementById('voiceUpload').addEventListener('change', async (event) => {
+                const file = event.target.files[0];
+                if (!file || !currentEmotionId) return;
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                try {
+                    const response = await fetch(`${API_BASE}/emotions/${currentEmotionId}/voices/upload`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (response.ok) {
+                        showMessage('Voice sample uploaded successfully');
+                        await loadVoiceSamples(currentEmotionId);
+                        await loadEmotions();
+                    } else {
+                        const error = await response.json();
+                        showMessage(error.detail || 'Upload failed', 'error');
+                    }
+                } catch (error) {
+                    console.error('Upload failed:', error);
+                    showMessage('Upload failed', 'error');
+                }
+                
+                // Clear the input
+                event.target.value = '';
+            });
+        }
+        
+        let currentAudio = null;
+        let currentPlayButton = null;
+        
+        async function playVoiceSample(samplePath, button) {
+            // Stop any currently playing audio
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
+                if (currentPlayButton) {
+                    currentPlayButton.classList.remove('playing');
+                    currentPlayButton.innerHTML = '▶️ Play';
+                }
+            }
+            
+            // If clicking the same button, just stop
+            if (currentPlayButton === button) {
+                currentPlayButton = null;
+                return;
+            }
+            
+            try {
+                // Update button state
+                button.classList.add('playing');
+                button.innerHTML = '⏸️ Stop';
+                currentPlayButton = button;
+                
+                // Fetch and play the audio
+                const response = await fetch(`${API_BASE}/emotions/${currentEmotionId}/voices/${encodeURIComponent(samplePath)}/audio`);
+                if (!response.ok) {
+                    throw new Error('Failed to load audio');
+                }
+                
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                
+                currentAudio = new Audio(url);
+                currentAudio.onended = () => {
+                    button.classList.remove('playing');
+                    button.innerHTML = '▶️ Play';
+                    currentPlayButton = null;
+                    currentAudio = null;
+                };
+                
+                currentAudio.onerror = () => {
+                    showMessage('Failed to play audio', 'error');
+                    button.classList.remove('playing');
+                    button.innerHTML = '▶️ Play';
+                    currentPlayButton = null;
+                    currentAudio = null;
+                };
+                
+                await currentAudio.play();
+                
+            } catch (error) {
+                console.error('Failed to play voice sample:', error);
+                showMessage('Failed to play voice sample', 'error');
+                button.classList.remove('playing');
+                button.innerHTML = '▶️ Play';
+                currentPlayButton = null;
+                currentAudio = null;
+            }
+        }
+        
+        async function deleteVoiceSample(samplePath) {
+            if (!confirm('Delete this voice sample?')) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/emotions/${currentEmotionId}/voices/${encodeURIComponent(samplePath)}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    showMessage('Voice sample deleted');
+                    await loadVoiceSamples(currentEmotionId);
+                    await loadEmotions();
+                } else {
+                    const error = await response.json();
+                    showMessage(error.detail || 'Delete failed', 'error');
+                }
+            } catch (error) {
+                console.error('Delete failed:', error);
+                showMessage('Delete failed', 'error');
+            }
+        }
+        
+        async function updateEmotion() {
+            if (!currentEmotionId) return;
+            
+            const data = {
+                name: document.getElementById('emotionName').value,
+                exaggeration: parseFloat(document.getElementById('exaggeration').value)
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE}/emotions/${currentEmotionId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                if (response.ok) {
+                    showMessage('Emotion updated successfully');
+                    await loadEmotions();
+                } else {
+                    const error = await response.json();
+                    showMessage(error.detail || 'Update failed', 'error');
+                }
+            } catch (error) {
+                console.error('Update failed:', error);
+                showMessage('Update failed', 'error');
+            }
+        }
+        
+        async function deleteEmotion() {
+            if (!currentEmotionId) return;
+            
+            if (!confirm(`Delete emotion "${document.getElementById('emotionName').value}"? This cannot be undone.`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/emotions/${currentEmotionId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    showMessage('Emotion deleted');
+                    currentEmotionId = null;
+                    document.getElementById('emotionDetails').style.display = 'none';
+                    document.getElementById('emptyState').style.display = 'block';
+                    await loadEmotions();
+                } else {
+                    const error = await response.json();
+                    showMessage(error.detail || 'Delete failed', 'error');
+                }
+            } catch (error) {
+                console.error('Delete failed:', error);
+                showMessage('Delete failed', 'error');
+            }
+        }
+        
+        async function testGeneration() {
+            if (!currentEmotionId) return;
+            
+            const button = document.getElementById('testButton');
+            const originalText = button.innerHTML;
+            button.innerHTML = '<span class="loading"></span> Generating...';
+            button.disabled = true;
+            
+            const data = {
+                text: document.getElementById('testText').value,
+                temperature: parseFloat(document.getElementById('temperature').value),
+                cfg_weight: parseFloat(document.getElementById('cfgWeight').value),
+                exaggeration: parseFloat(document.getElementById('exaggeration').value)
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE}/emotions/${currentEmotionId}/test`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    
+                    // Get the voice sample used from response headers
+                    const voiceSampleUsed = response.headers.get('X-Voice-Sample-Used');
+                    const duration = response.headers.get('X-Duration');
+                    const rtf = response.headers.get('X-RTF');
+                    
+                    const audio = document.getElementById('testAudio');
+                    audio.src = url;
+                    audio.style.display = 'block';
+                    audio.play();
+                    
+                    // Show which voice sample was used
+                    if (voiceSampleUsed) {
+                        document.getElementById('voiceSampleUsed').textContent = voiceSampleUsed;
+                        document.getElementById('audioDuration').textContent = parseFloat(duration).toFixed(2);
+                        document.getElementById('audioRTF').textContent = parseFloat(rtf).toFixed(2);
+                        document.getElementById('generationInfo').style.display = 'block';
+                    }
+                    
+                    showMessage('Audio generated successfully');
+                } else {
+                    const error = await response.json();
+                    showMessage(error.detail || 'Generation failed', 'error');
+                }
+            } catch (error) {
+                console.error('Generation failed:', error);
+                showMessage('Generation failed', 'error');
+            } finally {
+                button.innerHTML = originalText;
+                button.disabled = false;
+            }
+        }
+        
+        function showCreateEmotionModal() {
+            document.getElementById('createModal').style.display = 'block';
+        }
+        
+        function hideCreateEmotionModal() {
+            document.getElementById('createModal').style.display = 'none';
+            // Clear form
+            document.getElementById('newEmotionId').value = '';
+            document.getElementById('newEmotionName').value = '';
+            document.getElementById('newExaggeration').value = '0.5';
+            document.getElementById('newExaggerationValue').textContent = '0.5';
+        }
+        
+        async function createEmotion() {
+            const emotionId = document.getElementById('newEmotionId').value.trim().toLowerCase();
+            if (!emotionId) {
+                alert('Please enter an emotion ID');
+                return;
+            }
+            
+            const data = {
+                name: document.getElementById('newEmotionName').value || emotionId,
+                exaggeration: parseFloat(document.getElementById('newExaggeration').value),
+                voice_samples: []
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE}/emotions/${emotionId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                if (response.ok) {
+                    showMessage('Emotion created successfully');
+                    hideCreateEmotionModal();
+                    await loadEmotions();
+                    selectEmotion(emotionId);
+                } else {
+                    const error = await response.json();
+                    alert(error.detail || 'Creation failed');
+                }
+            } catch (error) {
+                console.error('Creation failed:', error);
+                alert('Creation failed');
+            }
+        }
+        
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('createModal');
+            if (event.target === modal) {
+                hideCreateEmotionModal();
+            }
+        }
+    </script>
+</body>
+</html>
