@@ -30,9 +30,8 @@ from chatterbox.models.s3gen import S3GEN_SR
 
 
 # Configuration constants
-AUDIO_DATA_DIR = Path("./audio_data")
+AUDIO_DATA_DIR = Path("./audio_data_v2")
 OUTPUT_DIR = Path("./output")
-TRANSCRIPTS_CACHE = AUDIO_DATA_DIR / "transcripts_cache.json"
 
 # Model paths
 BASE_MODEL_TYPE = "pretrained"
@@ -106,15 +105,29 @@ def load_available_audio_files() -> List[Path]:
     return audio_files
 
 
-def load_transcripts_cache() -> Dict[str, Dict]:
-    """Load the transcripts cache JSON file"""
-    if not TRANSCRIPTS_CACHE.exists():
-        raise FileNotFoundError(f"Transcripts cache not found: {TRANSCRIPTS_CACHE}")
+def load_available_transcripts() -> Dict[str, str]:
+    """Load all available transcript files and return a dict mapping audio filename to transcript text"""
+    txt_files = list(AUDIO_DATA_DIR.glob("*.txt"))
+    transcripts = {}
     
-    with open(TRANSCRIPTS_CACHE, 'r') as f:
-        transcripts = json.load(f)
+    loaded_count = 0
+    for txt_file in txt_files:
+        try:
+            # Check if corresponding wav file exists
+            wav_file = txt_file.with_suffix('.wav')
+            if wav_file.exists():
+                # Read transcript content
+                with open(txt_file, 'r', encoding='utf-8') as f:
+                    transcript_text = f.read().strip()
+                
+                # Only include non-empty transcripts
+                if transcript_text:
+                    transcripts[wav_file.name] = transcript_text
+                    loaded_count += 1
+        except Exception as e:
+            print(f"Warning: Failed to load transcript {txt_file}: {e}")
     
-    print(f"Loaded {len(transcripts)} transcripts from cache")
+    print(f"Loaded {loaded_count} transcripts from individual .txt files")
     return transcripts
 
 
@@ -124,10 +137,16 @@ def generate_test_cases(num_cases: int) -> List[TestCase]:
     
     # Load available data
     audio_files = load_available_audio_files()
-    transcripts = load_transcripts_cache()
+    transcripts = load_available_transcripts()
     
-    # Randomly select audio files and transcript keys
-    selected_audio = random.sample(audio_files, num_cases)
+    # Filter audio files to only those with transcripts
+    audio_files_with_transcripts = [f for f in audio_files if f.name in transcripts]
+    
+    if len(audio_files_with_transcripts) < num_cases:
+        raise ValueError(f"Not enough audio files with transcripts. Found {len(audio_files_with_transcripts)}, need {num_cases}")
+    
+    # Randomly select audio files and transcript keys  
+    selected_audio = random.sample(audio_files_with_transcripts, num_cases)
     transcript_keys = list(transcripts.keys())
     selected_transcript_keys = random.sample(transcript_keys, num_cases)
     
@@ -138,15 +157,14 @@ def generate_test_cases(num_cases: int) -> List[TestCase]:
         transcript_key = selected_transcript_keys[i]
         
         # Ensure we don't accidentally match the audio file with its transcript
-        audio_basename = audio_path.stem
-        if transcript_key.startswith(audio_basename):
+        if transcript_key == audio_path.name:
             # If matched, swap with next transcript (circular)
             transcript_key = selected_transcript_keys[(i + 1) % num_cases]
         
-        transcript_data = transcripts[transcript_key]
+        transcript_text = transcripts[transcript_key]
         test_case = TestCase(
             reference_audio_path=audio_path,
-            transcript_text=transcript_data["transcript"],
+            transcript_text=transcript_text,
             transcript_key=transcript_key
         )
         test_cases.append(test_case)
@@ -154,7 +172,7 @@ def generate_test_cases(num_cases: int) -> List[TestCase]:
         print(f"  Test case {i+1}:")
         print(f"    Reference audio: {audio_path.name}")
         print(f"    Transcript from: {transcript_key}")
-        print(f"    Text: {transcript_data['transcript'][:60]}...")
+        print(f"    Text: {transcript_text[:60]}...")
     
     return test_cases
 
@@ -194,6 +212,11 @@ def force_cuda_cleanup():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+        # Additional cleanup - reset peak memory stats
+        torch.cuda.reset_peak_memory_stats()
+        # Force garbage collection
+        import gc
+        gc.collect()
 
 
 def set_generation_seeds():
@@ -236,100 +259,6 @@ class ModelInfo:
     model_path: Optional[str] = None
 
 
-def load_base_model(device: str) -> ModelInfo:
-    """Load the base Chatterbox TTS model from HuggingFace"""
-    print(f"\n  Loading base model (from_pretrained)...")
-    start_time = time.time()
-    
-    try:
-        model = ChatterboxTTS.from_pretrained(device)
-        load_time = time.time() - start_time
-        
-        print(f"    ✓ Loaded in {load_time:.2f}s")
-        return ModelInfo(
-            model=model,
-            name="Base Chatterbox",
-            load_time=load_time,
-            model_path="from_pretrained"
-        )
-    except Exception as e:
-        print(f"    ✗ Failed to load base model: {e}")
-        raise
-
-
-def load_grpo_model(device: str) -> ModelInfo:
-    """Load the GRPO fine-tuned model"""
-    print(f"\n  Loading GRPO model from {GRPO_MODEL_PATH}...")
-    
-    if not GRPO_MODEL_PATH.exists():
-        raise FileNotFoundError(f"GRPO model not found: {GRPO_MODEL_PATH}")
-    
-    start_time = time.time()
-    
-    try:
-        model = ChatterboxTTS.from_local(GRPO_MODEL_PATH, device)
-        load_time = time.time() - start_time
-        
-        print(f"    ✓ Loaded in {load_time:.2f}s")
-        return ModelInfo(
-            model=model,
-            name="GRPO Fine-tuned (Nicole v1)",
-            load_time=load_time,
-            model_path=str(GRPO_MODEL_PATH)
-        )
-    except Exception as e:
-        print(f"    ✗ Failed to load GRPO model: {e}")
-        raise
-
-
-def load_grpo_v3_model(device: str) -> ModelInfo:
-    """Load the GRPO v3 fine-tuned model"""
-    print(f"\n  Loading GRPO v3 model from {GRPO_V3_MODEL_PATH}...")
-    
-    if not GRPO_V3_MODEL_PATH.exists():
-        raise FileNotFoundError(f"GRPO v3 model not found: {GRPO_V3_MODEL_PATH}")
-    
-    start_time = time.time()
-    
-    try:
-        model = ChatterboxTTS.from_local(GRPO_V3_MODEL_PATH, device)
-        load_time = time.time() - start_time
-        
-        print(f"    ✓ Loaded in {load_time:.2f}s")
-        return ModelInfo(
-            model=model,
-            name="GRPO Fine-tuned (Nicole v2)",
-            load_time=load_time,
-            model_path=str(GRPO_V3_MODEL_PATH)
-        )
-    except Exception as e:
-        print(f"    ✗ Failed to load GRPO v3 model: {e}")
-        raise
-
-
-def load_lora_v2_model(device: str) -> ModelInfo:
-    """Load the LoRA v2 fine-tuned model"""
-    print(f"\n  Loading LoRA v2 model from {LORA_V2_MODEL_PATH}...")
-    
-    if not LORA_V2_MODEL_PATH.exists():
-        raise FileNotFoundError(f"LoRA v2 model not found: {LORA_V2_MODEL_PATH}")
-    
-    start_time = time.time()
-    
-    try:
-        model = ChatterboxTTS.from_local(LORA_V2_MODEL_PATH, device)
-        load_time = time.time() - start_time
-        
-        print(f"    ✓ Loaded in {load_time:.2f}s")
-        return ModelInfo(
-            model=model,
-            name="LoRA Fine-tuned (Nicole v2)",
-            load_time=load_time,
-            model_path=str(LORA_V2_MODEL_PATH)
-        )
-    except Exception as e:
-        print(f"    ✗ Failed to load LoRA v2 model: {e}")
-        raise
 
 
 def get_model_configs() -> List[Tuple[str, str, Optional[str]]]:
@@ -347,7 +276,21 @@ def load_single_model(model_name: str, model_type: str, model_path: Optional[str
     print(f"\n  Loading {model_name}...")
     
     if model_type == "pretrained":
-        return load_base_model(device)
+        start_time = time.time()
+        try:
+            model = ChatterboxTTS.from_pretrained(device)
+            load_time = time.time() - start_time
+            
+            print(f"    ✓ Loaded in {load_time:.2f}s")
+            return ModelInfo(
+                model=model,
+                name=model_name,
+                load_time=load_time,
+                model_path="from_pretrained"
+            )
+        except Exception as e:
+            print(f"    ✗ Failed to load {model_name}: {e}")
+            raise
     elif model_type == "local":
         if model_path is None:
             raise ValueError(f"Model path required for local model: {model_name}")
@@ -379,17 +322,33 @@ def unload_model(model_info: ModelInfo, device: str):
     """Unload a model and free VRAM"""
     print(f"    Unloading {model_info.name}...")
     
-    # Delete model references
-    if hasattr(model_info.model, 't3'):
+    # More thorough model cleanup
+    if hasattr(model_info.model, 't3') and model_info.model.t3 is not None:
+        if hasattr(model_info.model.t3, 'cpu'):
+            model_info.model.t3.cpu()
         del model_info.model.t3
-    if hasattr(model_info.model, 's3gen'):
+        
+    if hasattr(model_info.model, 's3gen') and model_info.model.s3gen is not None:
+        if hasattr(model_info.model.s3gen, 'cpu'):
+            model_info.model.s3gen.cpu()  
         del model_info.model.s3gen
-    if hasattr(model_info.model, 've'):
+        
+    if hasattr(model_info.model, 've') and model_info.model.ve is not None:
+        if hasattr(model_info.model.ve, 'cpu'):
+            model_info.model.ve.cpu()
         del model_info.model.ve
+        
+    # Move main model to CPU before deletion if possible
+    if hasattr(model_info.model, 'cpu'):
+        model_info.model.cpu()
+        
     del model_info.model
     
-    # Force cleanup
+    # Force cleanup with wait
     force_cuda_cleanup()
+    import time
+    time.sleep(0.5)  # Brief pause to let cleanup complete
+    force_cuda_cleanup()  # Second cleanup pass
     
     # Report memory after cleanup
     if torch.cuda.is_available():
@@ -492,12 +451,16 @@ def run_performance_tests_sequential(test_cases: List[TestCase], device: str) ->
         print(f"TESTING MODEL {model_idx + 1}/{len(model_configs)}: {model_name}")
         print(f"{'='*60}")
         
+        # Aggressive cleanup before loading new model
+        print("  Performing pre-load cleanup...")
+        force_cuda_cleanup()
+        
         # Show VRAM before loading model
         vram_before_load = get_gpu_memory_mb() or 0.0
         print(f"  VRAM before model load: {vram_before_load:.1f}MB")
         
         try:
-            # Load the model
+            # Additional cleanup before loading
             force_cuda_cleanup()
             reset_peak_memory_stats()
             
@@ -549,9 +512,9 @@ def print_performance_results(results: List[PerformanceResult]):
         print("\nNo results to display")
         return
     
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 110)
     print("PERFORMANCE TEST RESULTS")
-    print("=" * 100)
+    print("=" * 110)
     
     # Group results by model
     models_results = {}
@@ -561,25 +524,25 @@ def print_performance_results(results: List[PerformanceResult]):
         models_results[result.model_name].append(result)
     
     # Print detailed results table
-    print(f"\n{'Model':<25} {'Test':<4} {'Gen Time':<8} {'Audio':<6} {'RTF':<6} {'VRAM Used':<10} {'VRAM Peak':<10}")
-    print(f"{'Name':<25} {'ID':<4} {'(s)':<8} {'(s)':<6} {'':<6} {'(MB)':<10} {'(MB)':<10}")
-    print("-" * 100)
+    print(f"\n{'Model':<35} {'Test':<4} {'Gen Time':<9} {'Audio':<7} {'RTF':<7} {'VRAM Used':<10} {'VRAM Peak':<10}")
+    print(f"{'Name':<35} {'ID':<4} {'(s)':<9} {'(s)':<7} {'':<7} {'(MB)':<10} {'(MB)':<10}")
+    print("-" * 110)
     
     for model_name, model_results in models_results.items():
         for i, result in enumerate(model_results):
             test_id = f"{list(models_results.keys()).index(model_name) + 1}.{i + 1}"
-            print(f"{model_name:<25} {test_id:<4} {result.generation_time:<8.2f} "
-                  f"{result.audio_duration:<6.2f} {result.rtf:<6.3f} "
+            print(f"{model_name:<35} {test_id:<4} {result.generation_time:<9.2f} "
+                  f"{result.audio_duration:<7.2f} {result.rtf:<7.3f} "
                   f"{result.vram_used_mb:<10.1f} {result.vram_peak_mb:<10.1f}")
     
     # Calculate and print summary statistics
-    print("\n" + "-" * 100)
+    print("\n" + "-" * 110)
     print("SUMMARY STATISTICS")
-    print("-" * 100)
+    print("-" * 110)
     
-    print(f"\n{'Model Name':<25} {'Tests':<5} {'Avg Gen':<8} {'Avg RTF':<8} {'Avg VRAM':<10} {'Min RTF':<8} {'Max RTF':<8}")
-    print(f"{'':25} {'':5} {'Time (s)':<8} {'':8} {'Used (MB)':<10} {'':8} {'':8}")
-    print("-" * 100)
+    print(f"\n{'Model Name':<35} {'Tests':<5} {'Avg Gen':<9} {'Avg RTF':<8} {'Avg VRAM':<11} {'Min RTF':<8} {'Max RTF':<8}")
+    print(f"{'':35} {'':5} {'Time (s)':<9} {'':8} {'Used (MB)':<11} {'':8} {'':8}")
+    print("-" * 110)
     
     for model_name, model_results in models_results.items():
         if not model_results:
@@ -591,8 +554,8 @@ def print_performance_results(results: List[PerformanceResult]):
         min_rtf = min(r.rtf for r in model_results)
         max_rtf = max(r.rtf for r in model_results)
         
-        print(f"{model_name:<25} {len(model_results):<5} {avg_gen_time:<8.2f} "
-              f"{avg_rtf:<8.3f} {avg_vram:<10.1f} {min_rtf:<8.3f} {max_rtf:<8.3f}")
+        print(f"{model_name:<35} {len(model_results):<5} {avg_gen_time:<9.2f} "
+              f"{avg_rtf:<8.3f} {avg_vram:<11.1f} {min_rtf:<8.3f} {max_rtf:<8.3f}")
     
     # Print model comparison
     if len(models_results) > 1:
@@ -605,8 +568,8 @@ def print_performance_results(results: List[PerformanceResult]):
         baseline_vram = sum(r.vram_used_mb for r in baseline_results) / len(baseline_results)
         
         print(f"\nUsing '{list(models_results.keys())[0]}' as baseline:")
-        print(f"{'Model':<25} {'RTF vs Base':<12} {'VRAM vs Base':<12} {'Performance'}")
-        print("-" * 70)
+        print(f"{'Model':<35} {'RTF vs Base':<12} {'VRAM vs Base':<12} {'Performance'}")
+        print("-" * 80)
         
         for i, (model_name, model_results) in enumerate(models_results.items()):
             avg_rtf = sum(r.rtf for r in model_results) / len(model_results)
@@ -632,7 +595,7 @@ def print_performance_results(results: List[PerformanceResult]):
                 else:
                     performance = "SLOWER/HEAVIER"
             
-            print(f"{model_name:<25} {rtf_diff:<12} {vram_diff:<12} {performance}")
+            print(f"{model_name:<35} {rtf_diff:<12} {vram_diff:<12} {performance}")
     
     # Print output files summary
     print(f"\n{'-' * 50}")
@@ -685,10 +648,11 @@ if __name__ == "__main__":
 # python3 performance_test_harness.py
 # 
 # The script will:
-# 1. Randomly select 3 audio files and 3 transcripts (mismatched)  
-# 2. For each model: Load → Test 3 cases → Unload (sequential approach)
-# 3. Models tested: Base, GRPO fine-tuned (v1), GRPO fine-tuned (v3), LoRA fine-tuned (v2)
-# 4. Generate 12 total audio files (4 models x 3 test cases)
-# 5. Measure VRAM usage (per model load + per generation), timing, and RTF
-# 6. Display comprehensive performance comparison tables
-# 7. Save all generated audio files to ./output/ directory
+# 1. Load audio files from ./audio_data_v2/ with paired .txt transcript files
+# 2. Randomly select 3 audio files and 3 transcripts (mismatched)  
+# 3. For each model: Load → Test 3 cases → Unload (sequential approach)
+# 4. Models tested: Base, GRPO fine-tuned (v1), GRPO fine-tuned (v2), LoRA fine-tuned (v2)
+# 5. Generate 12 total audio files (4 models x 3 test cases)
+# 6. Measure VRAM usage (per model load + per generation), timing, and RTF
+# 7. Display comprehensive performance comparison tables
+# 8. Save all generated audio files to ./output/ directory
