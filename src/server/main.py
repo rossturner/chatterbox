@@ -5,10 +5,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Response, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Response, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+import json
 
 from .config import Config, load_emotions_config
 from .models import (
@@ -24,11 +25,13 @@ from .models import (
     EmotionUpdateRequest,
     EmotionTestRequest,
     EmotionListResponse,
-    VoiceSample
+    VoiceSample,
+    WebSocketRequest
 )
 from .lock_manager import GenerationLock
 from .tts_manager import TTSManager
 from .emotion_manager import EmotionManager
+from .websocket_handlers import WebSocketConnectionManager
 from .utils import normalize_text, get_memory_usage, format_duration
 
 # Configure logging
@@ -50,6 +53,7 @@ config: Optional[Config] = None
 emotions_config: Optional[dict] = None
 tts_manager: Optional[TTSManager] = None
 emotion_manager: Optional[EmotionManager] = None
+websocket_manager: Optional[WebSocketConnectionManager] = None
 generation_lock = GenerationLock()
 server_start_time = datetime.utcnow()
 last_request_time: Optional[datetime] = None
@@ -58,7 +62,7 @@ last_request_time: Optional[datetime] = None
 @app.on_event("startup")
 async def startup_event():
     """Initialize server on startup"""
-    global config, emotions_config, tts_manager, emotion_manager
+    global config, emotions_config, tts_manager, emotion_manager, websocket_manager
     
     logger.info("Starting Chatterbox TTS Server...")
     
@@ -87,6 +91,9 @@ async def startup_event():
         
         # Initialize emotion manager
         emotion_manager = EmotionManager(config.server, tts_manager.conditionals_manager)
+        
+        # Initialize WebSocket connection manager
+        websocket_manager = WebSocketConnectionManager(tts_manager, emotion_manager, generation_lock)
         
         logger.info("Server initialization complete!")
         
@@ -382,14 +389,13 @@ async def update_emotion(emotion_id: str, request: EmotionUpdateRequest):
     try:
         emotion = emotion_manager.update_emotion(emotion_id, request)
         
-        # Reload conditionals if exaggeration changed
-        if request.exaggeration is not None:
-            emotions_config = emotion_manager.list_emotions()
-            tts_manager.conditionals_manager.prepare_conditionals(
-                tts_manager.model,
-                {emotion_id: emotion},
-                batch_size=5
-            )
+        # Reload conditionals for all emotions to maintain cache consistency
+        emotions_config = emotion_manager.list_emotions()
+        tts_manager.conditionals_manager.prepare_conditionals(
+            tts_manager.model,
+            emotions_config,
+            batch_size=5
+        )
         
         return emotion
     except ValueError as e:
@@ -576,16 +582,16 @@ async def upload_voice_sample(
         emotion = emotion_manager.add_voice_sample(emotion_id, saved_path)
         logger.info(f"Added voice sample to emotion {emotion_id}")
         
-        # Try to regenerate conditionals for this emotion
+        # Try to regenerate conditionals for all emotions to maintain cache consistency
         try:
-            logger.info(f"Regenerating conditionals for emotion {emotion_id} after voice upload")
-            tts_manager.conditionals_manager.clear_emotion_cache(emotion_id)
+            logger.info(f"Regenerating conditionals after voice upload for emotion {emotion_id}")
+            emotions_config = emotion_manager.list_emotions()
             tts_manager.conditionals_manager.prepare_conditionals(
                 tts_manager.model,
-                {emotion_id: emotion},
+                emotions_config,
                 batch_size=5
             )
-            logger.info(f"Successfully regenerated conditionals for {emotion_id}")
+            logger.info(f"Successfully regenerated conditionals for all emotions")
         except Exception as conditional_error:
             logger.warning(f"Failed to regenerate conditionals (non-fatal): {conditional_error}")
         
@@ -610,15 +616,14 @@ async def delete_voice_sample(emotion_id: str, sample_path: str):
     try:
         emotion = emotion_manager.remove_voice_sample(emotion_id, sample_path)
         
-        # Regenerate conditionals for this emotion
-        logger.info(f"Regenerating conditionals for emotion {emotion_id} after voice deletion")
-        tts_manager.conditionals_manager.clear_emotion_cache(emotion_id)
-        if emotion.voice_samples:  # Only regenerate if there are still samples
-            tts_manager.conditionals_manager.prepare_conditionals(
-                tts_manager.model,
-                {emotion_id: emotion},
-                batch_size=5
-            )
+        # Regenerate conditionals for all emotions to maintain cache consistency
+        logger.info(f"Regenerating conditionals after voice deletion for emotion {emotion_id}")
+        emotions_config = emotion_manager.list_emotions()
+        tts_manager.conditionals_manager.prepare_conditionals(
+            tts_manager.model,
+            emotions_config,
+            batch_size=5
+        )
         
         return {
             "success": True,
@@ -631,6 +636,88 @@ async def delete_voice_sample(emotion_id: str, sample_path: str):
     except Exception as e:
         logger.error(f"Failed to delete voice sample: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/ws/generate")
+async def websocket_generate_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for streaming TTS generation"""
+    if not websocket_manager:
+        await websocket.close(code=1013)  # Service unavailable
+        return
+    
+    connection_id = None
+    
+    try:
+        # Accept connection and get connection ID
+        connection_id = await websocket_manager.connect(websocket)
+        
+        # Handle messages
+        while True:
+            try:
+                # Receive message from client
+                raw_message = await websocket.receive_text()
+                
+                try:
+                    message_data = json.loads(raw_message)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON from connection {connection_id}: {e}")
+                    await websocket_manager._send_error(
+                        connection_id,
+                        "Invalid JSON format",
+                        str(e),
+                        recoverable=True
+                    )
+                    continue
+                
+                # Process the message
+                should_continue = await websocket_manager.handle_message(connection_id, message_data)
+                
+                if not should_continue:
+                    break
+                    
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket client disconnected: {connection_id}")
+                break
+                
+            except Exception as e:
+                logger.error(f"Error in WebSocket endpoint: {e}")
+                if connection_id:
+                    await websocket_manager._send_error(
+                        connection_id,
+                        "Server error",
+                        str(e),
+                        recoverable=False
+                    )
+                break
+    
+    except Exception as e:
+        logger.error(f"WebSocket connection error: {e}")
+    
+    finally:
+        # Clean up connection
+        if connection_id and websocket_manager:
+            await websocket_manager.disconnect(connection_id)
+
+
+@app.get("/ws/stats")
+async def websocket_stats():
+    """Get WebSocket connection statistics"""
+    if not websocket_manager:
+        raise HTTPException(status_code=503, detail="WebSocket manager not initialized")
+    
+    return websocket_manager.get_connection_stats()
+
+
+@app.get("/ws/metrics")
+async def websocket_performance_metrics(limit: int = 50):
+    """Get WebSocket performance metrics"""
+    if not websocket_manager:
+        raise HTTPException(status_code=503, detail="WebSocket manager not initialized")
+    
+    return {
+        "metrics": websocket_manager.get_performance_metrics(limit),
+        "total_metrics": len(websocket_manager.performance_metrics)
+    }
 
 
 @app.exception_handler(Exception)

@@ -6,8 +6,8 @@ server:
   busy_timeout: 1.0  # seconds to wait for lock
   
 model:
-  type: "grpo"  # "base", "grpo", or "quantized"
-  path: "./checkpoints_grpo/merged_grpo_model"  # for local models
+  type: "quantized"  # "base", "grpo", or "quantized"
+  path: "./models/nicole_v2/s3_quantized"  # for local models
   device: "cuda"
   keep_warm: true  # Keep model warm between requests
   
@@ -28,6 +28,14 @@ streaming:
   default_chunk_size: 25
   default_context_window: 50
   fade_duration: 0.02
+
+websocket:
+  enabled: true  # Enable WebSocket streaming
+  max_connections: 10  # Maximum concurrent WebSocket connections
+  connection_timeout: 30  # Timeout for WebSocket connections in seconds
+  max_request_size: 1000  # Maximum text length for WebSocket requests
+  include_progress: true  # Send progress updates by default
+  sentence_streaming: true  # Use sentence-based streaming instead of token streaming
   
 performance:
   pin_memory: true  # Use pinned memory for transfers

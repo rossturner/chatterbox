@@ -54,6 +54,17 @@ class StreamingConfig:
 
 
 @dataclass
+class WebSocketConfig:
+    """WebSocket configuration"""
+    enabled: bool = True
+    max_connections: int = 10
+    connection_timeout: float = 30.0
+    max_request_size: int = 1000
+    include_progress: bool = True
+    sentence_streaming: bool = True
+
+
+@dataclass
 class PerformanceConfig:
     """Performance configuration"""
     pin_memory: bool = True
@@ -69,6 +80,7 @@ class Config:
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     caching: CachingConfig = field(default_factory=CachingConfig)
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
+    websocket: WebSocketConfig = field(default_factory=WebSocketConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
     
     @classmethod
@@ -98,6 +110,10 @@ class Config:
         # Parse streaming config
         if 'streaming' in data:
             config.streaming = StreamingConfig(**data['streaming'])
+        
+        # Parse websocket config
+        if 'websocket' in data:
+            config.websocket = WebSocketConfig(**data['websocket'])
         
         # Parse performance config
         if 'performance' in data:

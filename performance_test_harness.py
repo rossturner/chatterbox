@@ -36,8 +36,9 @@ TRANSCRIPTS_CACHE = AUDIO_DATA_DIR / "transcripts_cache.json"
 
 # Model paths
 BASE_MODEL_TYPE = "pretrained"
-GRPO_MODEL_PATH = Path("./checkpoints_grpo/merged_grpo_model")
-QUANTIZED_MODEL_PATH = Path("./quantized_models/mixed_precision")
+GRPO_MODEL_PATH = Path("./models/nicole_v1/base_grpo")
+GRPO_V3_MODEL_PATH = Path("./models/nicole_v2/grpo_v3")
+LORA_V2_MODEL_PATH = Path("./models/nicole_v2/lora_v2")
 
 # Test parameters
 NUM_TEST_CASES = 3
@@ -272,7 +273,7 @@ def load_grpo_model(device: str) -> ModelInfo:
         print(f"    ✓ Loaded in {load_time:.2f}s")
         return ModelInfo(
             model=model,
-            name="GRPO Fine-tuned",
+            name="GRPO Fine-tuned (Nicole v1)",
             load_time=load_time,
             model_path=str(GRPO_MODEL_PATH)
         )
@@ -281,28 +282,53 @@ def load_grpo_model(device: str) -> ModelInfo:
         raise
 
 
-def load_quantized_model(device: str) -> ModelInfo:
-    """Load the quantized model"""
-    print(f"\n  Loading quantized model from {QUANTIZED_MODEL_PATH}...")
+def load_grpo_v3_model(device: str) -> ModelInfo:
+    """Load the GRPO v3 fine-tuned model"""
+    print(f"\n  Loading GRPO v3 model from {GRPO_V3_MODEL_PATH}...")
     
-    if not QUANTIZED_MODEL_PATH.exists():
-        raise FileNotFoundError(f"Quantized model not found: {QUANTIZED_MODEL_PATH}")
+    if not GRPO_V3_MODEL_PATH.exists():
+        raise FileNotFoundError(f"GRPO v3 model not found: {GRPO_V3_MODEL_PATH}")
     
     start_time = time.time()
     
     try:
-        model = ChatterboxTTS.from_local(QUANTIZED_MODEL_PATH, device)
+        model = ChatterboxTTS.from_local(GRPO_V3_MODEL_PATH, device)
         load_time = time.time() - start_time
         
         print(f"    ✓ Loaded in {load_time:.2f}s")
         return ModelInfo(
             model=model,
-            name="Mixed Precision Quantized",
+            name="GRPO Fine-tuned (Nicole v2)",
             load_time=load_time,
-            model_path=str(QUANTIZED_MODEL_PATH)
+            model_path=str(GRPO_V3_MODEL_PATH)
         )
     except Exception as e:
-        print(f"    ✗ Failed to load quantized model: {e}")
+        print(f"    ✗ Failed to load GRPO v3 model: {e}")
+        raise
+
+
+def load_lora_v2_model(device: str) -> ModelInfo:
+    """Load the LoRA v2 fine-tuned model"""
+    print(f"\n  Loading LoRA v2 model from {LORA_V2_MODEL_PATH}...")
+    
+    if not LORA_V2_MODEL_PATH.exists():
+        raise FileNotFoundError(f"LoRA v2 model not found: {LORA_V2_MODEL_PATH}")
+    
+    start_time = time.time()
+    
+    try:
+        model = ChatterboxTTS.from_local(LORA_V2_MODEL_PATH, device)
+        load_time = time.time() - start_time
+        
+        print(f"    ✓ Loaded in {load_time:.2f}s")
+        return ModelInfo(
+            model=model,
+            name="LoRA Fine-tuned (Nicole v2)",
+            load_time=load_time,
+            model_path=str(LORA_V2_MODEL_PATH)
+        )
+    except Exception as e:
+        print(f"    ✗ Failed to load LoRA v2 model: {e}")
         raise
 
 
@@ -310,8 +336,9 @@ def get_model_configs() -> List[Tuple[str, str, Optional[str]]]:
     """Get list of model configurations to test"""
     return [
         ("Base Chatterbox", "pretrained", None),
-        ("GRPO Fine-tuned", "local", str(GRPO_MODEL_PATH)),
-        ("Mixed Precision Quantized", "local", str(QUANTIZED_MODEL_PATH))
+        ("GRPO Fine-tuned (Nicole v1)", "local", str(GRPO_MODEL_PATH)),
+        ("GRPO Fine-tuned (Nicole v2)", "local", str(GRPO_V3_MODEL_PATH)),
+        ("LoRA Fine-tuned (Nicole v2)", "local", str(LORA_V2_MODEL_PATH))
     ]
 
 
@@ -381,7 +408,8 @@ def run_single_test(
     model_info: ModelInfo, 
     test_case: TestCase, 
     test_id: str, 
-    device: str
+    device: str,
+    vram_before_model_load: float = 0.0
 ) -> PerformanceResult:
     """Run a single performance test case"""
     print(f"\n    Test {test_id}: {model_info.name}")
@@ -419,7 +447,7 @@ def run_single_test(
     # Calculate metrics
     audio_duration = calculate_audio_duration(wav_output)
     rtf = generation_time / audio_duration if audio_duration > 0 else float('inf')
-    vram_used = vram_peak - (vram_before.current_mb or 0.0)
+    vram_used = vram_peak - vram_before_model_load
     
     # Create output filename
     output_filename = f"{test_id}_{model_info.name.replace(' ', '_')}_{test_case.reference_audio_path.stem}.wav"
@@ -486,7 +514,7 @@ def run_performance_tests_sequential(test_cases: List[TestCase], device: str) ->
                 test_id = f"{model_idx + 1}.{case_idx + 1}"
                 
                 try:
-                    result = run_single_test(model_info, test_case, test_id, device)
+                    result = run_single_test(model_info, test_case, test_id, device, vram_before_load)
                     results.append(result)
                     model_results.append(result)
                 except Exception as e:
@@ -628,7 +656,7 @@ def main():
         print(f"  Audio/transcript selection: Random (not seeded)")
         print(f"  TTS generation seed: {RANDOM_SEED} (for reproducible output)")
         print(f"  Test cases per model: {NUM_TEST_CASES}")
-        print(f"  Total generations: {NUM_TEST_CASES * 3}")
+        print(f"  Total generations: {NUM_TEST_CASES * 4}")
         
         # Generate test cases
         test_cases = generate_test_cases(NUM_TEST_CASES)
@@ -659,8 +687,8 @@ if __name__ == "__main__":
 # The script will:
 # 1. Randomly select 3 audio files and 3 transcripts (mismatched)  
 # 2. For each model: Load → Test 3 cases → Unload (sequential approach)
-# 3. Models tested: Base, GRPO fine-tuned, Mixed precision quantized
-# 4. Generate 9 total audio files (3 models x 3 test cases)
+# 3. Models tested: Base, GRPO fine-tuned (v1), GRPO fine-tuned (v3), LoRA fine-tuned (v2)
+# 4. Generate 12 total audio files (4 models x 3 test cases)
 # 5. Measure VRAM usage (per model load + per generation), timing, and RTF
 # 6. Display comprehensive performance comparison tables
 # 7. Save all generated audio files to ./output/ directory

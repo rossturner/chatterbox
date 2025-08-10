@@ -23,7 +23,17 @@ dependencies = [
     "matplotlib",
     "whisper-openai",
     "jiwer",
-    "sounddevice==0.5.2"
+    "sounddevice==0.5.2",
+    # Server dependencies
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "pydantic>=2.0.0",
+    "PyYAML>=6.0.0",
+    # WebSocket dependencies
+    "websockets>=11.0.0",
+    # Testing dependencies
+    "requests>=2.30.0",
+    "tabulate>=0.9.0"
 ]
 
 [project.urls]

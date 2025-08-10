@@ -45,10 +45,12 @@ checkpoints/
 checkpoints_grpo/
 quantized_models/
 conditionals_cache/
+models/
 .venv/
 .idea/
 .gradio
 
-# Ignore generated sample .wav files (but allow audio_data/*.wav)
+# Ignore generated sample .wav files (but allow audio_data/*.wav and audio_data_v2/*.wav)
 **/*.wav
 !audio_data/*.wav
+!audio_data_v2/*.wav
