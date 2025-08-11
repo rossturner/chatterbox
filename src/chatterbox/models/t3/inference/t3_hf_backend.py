@@ -4,6 +4,7 @@ import torch
 from torch import nn as nn
 from transformers import LlamaConfig, LlamaModel, LlamaPreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
+from transformers.cache_utils import StaticCache
 
 
 class T3HuggingfaceBackend(LlamaPreTrainedModel, GenerationMixin):
@@ -31,6 +32,10 @@ class T3HuggingfaceBackend(LlamaPreTrainedModel, GenerationMixin):
         self.speech_head = speech_head
         self._added_cond = False
         self.alignment_stream_analyzer = alignment_stream_analyzer
+    
+    @property
+    def dtype(self):
+        return self.model.dtype
 
     @torch.inference_mode()
     def prepare_inputs_for_generation(
@@ -73,11 +78,10 @@ class T3HuggingfaceBackend(LlamaPreTrainedModel, GenerationMixin):
     def forward(
         self,
         inputs_embeds: torch.Tensor,
-        past_key_values: Optional[torch.Tensor]=None,
+        past_key_values,
         use_cache=True,
         output_attentions=False,
-        output_hidden_states=True,
-        return_dict=True,
+        cache_position=None,
     ):
         """
         This is a method used by huggingface's generate() method.
@@ -86,21 +90,19 @@ class T3HuggingfaceBackend(LlamaPreTrainedModel, GenerationMixin):
         :param inputs_embeds: (B, S, C) float32 tensor of conditioning inputs. If past key values are given,
         S should be 1.
         """
-        is_large_input = inputs_embeds.size(1) != 1
-        has_cache = past_key_values is not None and len(past_key_values) > 0
-        assert not (is_large_input and has_cache)
-        assert return_dict
-        assert output_hidden_states
+        # Handle input validation before calling the model
 
         tfmr_out = self.model(
             inputs_embeds=inputs_embeds,
             past_key_values=past_key_values,
             use_cache=use_cache,
             output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=True,
+            output_hidden_states=False,
+            return_dict=False,
+            cache_position=cache_position,
         )
-        hidden_states = tfmr_out.hidden_states[-1]  # (B, seq, dim)
+        # Top-level compilation may require .clone() here
+        hidden_states = tfmr_out[0]
 
         logits = self.speech_head(hidden_states)
         # assert inputs_embeds.size(0) == 1 # (disabled for CFG)
@@ -108,9 +110,4 @@ class T3HuggingfaceBackend(LlamaPreTrainedModel, GenerationMixin):
         # NOTE: hallucination handler may modify logits to force emit an EOS token
         # logits = self.alignment_stream_analyzer.step(logits)
 
-        return CausalLMOutputWithCrossAttentions(
-            logits=logits,
-            past_key_values=tfmr_out.past_key_values,
-            hidden_states=tfmr_out.hidden_states,
-            attentions=tfmr_out.attentions,
-        )
+        return logits

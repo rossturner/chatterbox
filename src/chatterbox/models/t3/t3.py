@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch import nn, Tensor
 from transformers import LlamaModel, LlamaConfig
 from transformers.generation.logits_process import TopPLogitsWarper, RepetitionPenaltyLogitsProcessor
+from transformers.cache_utils import StaticCache
 
 from .modules.learned_pos_emb import LearnedPositionEmbeddings
 
@@ -74,10 +75,96 @@ class T3(nn.Module):
     def device(self):
         return self.speech_head.weight.device
 
+    @property
+    def dtype(self):
+        return self.speech_head.weight.dtype
+
+    def get_cache(self, config, max_batch_size, max_cache_len, device, dtype):
+        """
+        Create or reuse a StaticCache instance for efficient KV caching.
+        """
+        if hasattr(self, 'backend_cache'):
+            if (hasattr(self, 'backend_cache_params') and
+                self.backend_cache_params['max_batch_size'] == max_batch_size and
+                self.backend_cache_params['max_cache_len'] == max_cache_len and
+                self.backend_cache_params['dtype'] == dtype and
+                self.backend_cache_params['device'] == device):
+                self.backend_cache.reset()
+                return self.backend_cache
+            else:
+                del self.backend_cache
+
+        cache = StaticCache(
+            config=config,
+            max_batch_size=max_batch_size,
+            max_cache_len=max_cache_len,
+            device=device,
+            dtype=dtype,
+        )
+        
+        self.backend_cache = cache
+        self.backend_cache_params = {
+            'max_batch_size': max_batch_size,
+            'max_cache_len': max_cache_len,
+            'dtype': dtype,
+            'device': device,
+        }
+        return cache
+
+    def get_speech_pos_embedding_cache(self, max_gen_tokens, dtype):
+        """Cache speech position embeddings for faster generation."""
+        if not hasattr(self, '_speech_pos_embedding_cache') or self._speech_pos_embedding_cache.size(0) < max_gen_tokens:
+            self._speech_pos_embedding_cache = []
+            for pos in range(max_gen_tokens):
+                embedding = self.speech_pos_emb.get_fixed_embedding(pos)
+                self._speech_pos_embedding_cache.append(embedding)
+            self._speech_pos_embedding_cache = torch.stack(self._speech_pos_embedding_cache, dim=0).to(device=self.device)
+        elif self._speech_pos_embedding_cache.dtype != dtype:
+            self._speech_pos_embedding_cache = self._speech_pos_embedding_cache.to(dtype=dtype)
+        return self._speech_pos_embedding_cache
+
+    def init_speech_embedding_cache(self, vocab_size, dtype):
+        """Cache speech embeddings for faster token lookup."""
+        if not hasattr(self, '_speech_embedding_cache') or self._speech_embedding_cache.size(0) < vocab_size:
+            self._speech_embedding_cache = []
+            for pos in range(vocab_size):
+                pos_tensor = torch.tensor([pos], device=self.device)
+                embedding = self.speech_emb(pos_tensor)
+                self._speech_embedding_cache.append(embedding.squeeze(0))
+            self._speech_embedding_cache = torch.stack(self._speech_embedding_cache, dim=0).to(device=self.device)
+        elif self._speech_embedding_cache.dtype != dtype:
+            self._speech_embedding_cache = self._speech_embedding_cache.to(dtype=dtype)
+        return self._speech_embedding_cache
+
+    def _step_compilation_target(
+        self,
+        next_token_embed: Tensor,
+        kv_cache: StaticCache,
+    ):
+        """
+        Compilation target for the core inference step.
+        Can be decorated with torch.compile for faster execution.
+        """
+        return self.patched_model(
+            inputs_embeds=next_token_embed,
+            past_key_values=kv_cache,
+            cache_position=kv_cache.get_seq_length().unsqueeze(0),
+        )
+
     def prepare_conditioning(self, t3_cond: T3Cond):
         """
         Token cond data needs to be embedded, so that needs to be here instead of in `T3CondEnc`.
         """
+        # Convert all condition tensors to model dtype to avoid mismatches
+        if t3_cond.speaker_emb is not None:
+            t3_cond.speaker_emb = t3_cond.speaker_emb.to(self.dtype)
+        
+        if t3_cond.emotion_adv is not None:
+            t3_cond.emotion_adv = t3_cond.emotion_adv.to(self.dtype)
+        
+        if t3_cond.clap_emb is not None:
+            t3_cond.clap_emb = t3_cond.clap_emb.to(self.dtype)
+        
         if t3_cond.cond_prompt_speech_tokens is not None and t3_cond.cond_prompt_speech_emb is None:
             t3_cond.cond_prompt_speech_emb = self.speech_emb(t3_cond.cond_prompt_speech_tokens) + \
                 self.speech_pos_emb(t3_cond.cond_prompt_speech_tokens)
@@ -93,7 +180,8 @@ class T3(nn.Module):
         # prepare input embeddings (skip backbone tranformer embeddings)
         cond_emb = self.prepare_conditioning(t3_cond)  # (B, len_cond, dim)
         text_emb = self.text_emb(text_tokens)  # (B, len_text, dim)
-        text_emb[1].zero_()  # CFG uncond
+        if text_emb.size(0) > 1:  # Only zero out if we have CFG (batch size > 1)
+            text_emb[1].zero_()  # CFG uncond
 
         speech_emb = self.speech_emb(speech_tokens)  # (B, len_speech, dim)
         if self.hp.input_pos_emb == "learned":
@@ -218,6 +306,7 @@ class T3(nn.Module):
         # HF generate args
         num_return_sequences=1,
         max_new_tokens=None,
+        max_cache_len=1500,
         stop_on_eos=True,
         do_sample=True,
         temperature=0.8,
@@ -239,6 +328,10 @@ class T3(nn.Module):
         if initial_speech_tokens is None:
             initial_speech_tokens = self.hp.start_speech_token * torch.ones_like(text_tokens[:, :1])
 
+        # When cfg_weight is 0, we only need batch size 1
+        if cfg_weight == 0:
+            text_tokens = text_tokens[0:1]  # Take only the first sequence
+        
         # Prepare custom input embeds
         embeds, len_cond = self.prepare_input_embeds(
             t3_cond=t3_cond,
@@ -246,11 +339,7 @@ class T3(nn.Module):
             speech_tokens=initial_speech_tokens,
         )
 
-        # In order to use the standard HF generate method, we need to extend some methods to inject our custom logic
-        # Note the llama-specific logic. Other tfmr types can be added later.
-
-        # TODO? synchronize the expensive compile function
-        # with self.compile_lock:
+        # Set up patched model if not already compiled
         if not self.compiled:
             # Disable AlignmentStreamAnalyzer to enable optimized attention
             patched_model = T3HuggingfaceBackend(
@@ -262,65 +351,81 @@ class T3(nn.Module):
             )
             self.patched_model = patched_model
             self.compiled = True
-
-        # # Run normal generate method, which calls our custom extended methods
-        # return self.patched_model.generate(
-        #     inputs=initial_speech_tokens,
-        #     decoder_cond=embeds,
-        #     bos_token_id=self.hp.start_speech_token,
-        #     eos_token_id=(self.hp.stop_speech_token if stop_on_eos else -1),
-        #     pad_token_id=self.hp.stop_speech_token,
-        #     max_new_tokens=max_new_tokens or self.hp.max_speech_tokens,
-        #     num_return_sequences=num_return_sequences,
-        #     temperature=temperature,
-        #     top_p=top_p,
-        #     length_penalty=length_penalty,
-        #     repetition_penalty=repetition_penalty,
-        #     do_sample=do_sample,
-        #     # cache_implementation=None if not self.compiled else "static",
-        # )
-
+        
+        # Pre-compute embedding caches for the generation loop
+        self.get_speech_pos_embedding_cache(max_new_tokens + 1 or self.hp.max_speech_tokens, dtype=embeds.dtype)
+        self.init_speech_embedding_cache(vocab_size=self.hp.speech_tokens_dict_size, dtype=embeds.dtype)
+        
         device = embeds.device
+        effective_batch_size = 2 if cfg_weight > 0 else 1  # CFG uses batch size 2
+        
+        # Check cache length is sufficient
+        total_len = embeds.size(1) + (max_new_tokens or self.hp.max_speech_tokens) + 1
+        if total_len > max_cache_len:
+            logger.warning(f"Total sequence length {total_len} exceeds max_cache_len {max_cache_len}. Adjusting.")
+            max_cache_len = total_len
+        
+        # Get or create static cache
+        kv_cache = self.get_cache(
+            config=self.patched_model.config,
+            max_batch_size=effective_batch_size,
+            max_cache_len=max_cache_len,
+            device=device,
+            dtype=self.patched_model.dtype,
+        )
 
         bos_token = torch.tensor([[self.hp.start_speech_token]], dtype=torch.long, device=device)
-        bos_embed = self.speech_emb(bos_token)  # shape: (B, 1, embed_dim)
-        bos_embed = bos_embed + self.speech_pos_emb.get_fixed_embedding(0)
+        bos_embed = self._speech_embedding_cache[bos_token]
+        bos_embed = bos_embed + self._speech_pos_embedding_cache[0]
 
-        # batch_size=2 for CFG
+        # batch_size=2 for CFG, 1 otherwise
         bos_embed = torch.cat([bos_embed, bos_embed])
-
-        # Combine condition and BOS token for the initial input
-        inputs_embeds = torch.cat([embeds, bos_embed], dim=1)
+        
+        # Combine condition and BOS token for the initial input if cfg_weight > 0
+        if cfg_weight > 0:
+            inputs_embeds = torch.cat([embeds, bos_embed], dim=1)
+        else:
+            inputs_embeds = embeds
+        
+        # Move all inputs to patched_model.dtype (critical for bfloat16)
+        inputs_embeds = inputs_embeds.to(self.patched_model.dtype)
+        embeds = embeds.to(self.patched_model.dtype)
+        bos_embed = bos_embed.to(self.patched_model.dtype)
 
         # Track generated token ids; start with the BOS token.
-        generated_ids = bos_token.clone()
+        PAD_TOKEN_ID = self.hp.stop_speech_token + 1  # Assuming unused
+        bos_len = bos_token.shape[1]
+        generated_ids = torch.full((1, bos_len + max_new_tokens), PAD_TOKEN_ID, dtype=torch.long, device=device)
+        generated_ids[0, :bos_len] = bos_token
         predicted = []  # To store the predicted tokens
+        
+        # Pre-compute length estimate for early EOS checking
+        length_guesstimate = text_tokens.shape[1] * 2
+        length_guesstimate = int(length_guesstimate * 0.8)  # variance
+        stop_token_tensor = torch.tensor(self.hp.stop_speech_token, device=self.device)
 
         # Instantiate the logits processors.
         top_p_warper = TopPLogitsWarper(top_p=top_p)
         repetition_penalty_processor = RepetitionPenaltyLogitsProcessor(penalty=repetition_penalty)
 
-        # ---- Initial Forward Pass (no kv_cache yet) ----
-        output = self.patched_model(
+        # ---- Initial Forward Pass with StaticCache ----
+        output_logits = self.patched_model(
             inputs_embeds=inputs_embeds,
-            past_key_values=None,
-            use_cache=True,
-            output_attentions=False,
-            output_hidden_states=True,
-            return_dict=True,
+            past_key_values=kv_cache,
+            cache_position=torch.arange(0, inputs_embeds.size(1), device=device),
         )
-        # Initialize kv_cache with the full context.
-        past = output.past_key_values
 
         # ---- Generation Loop using kv_cache ----
         for i in tqdm(range(max_new_tokens), desc="Sampling", dynamic_ncols=True):
-            logits = output.logits[:, -1, :]
+            logits = output_logits[:, -1, :]
 
             # CFG
-            logits_cond = logits[0:1]
-            logits_uncond = logits[1:2]
-            logits = logits_cond + cfg_weight * (logits_cond - logits_uncond)
-            logits = logits.squeeze(1)
+            if cfg_weight > 0:
+                logits_cond = logits[0:1]
+                logits_uncond = logits[1:2]
+                logits = logits_cond + cfg_weight * (logits_cond - logits_uncond)
+            else:
+                logits = logits[0:1]  # Keep batch dimension
 
             # Apply temperature scaling.
             if temperature != 1.0:
@@ -335,29 +440,28 @@ class T3(nn.Module):
             next_token = torch.multinomial(probs, num_samples=1)  # shape: (B, 1)
 
             predicted.append(next_token)
-            generated_ids = torch.cat([generated_ids, next_token], dim=1)
+            generated_ids[0, i + bos_len] = next_token
 
-            # Check for EOS token.
+            # Check for EOS token immediately for early termination
             if next_token.view(-1) == self.hp.stop_speech_token:
                 break
+            
+            # Check for EOS token less frequently for performance after expected length
+            if i > length_guesstimate and i % 20 == 0:
+                if (generated_ids[0, :i + bos_len + 1] == stop_token_tensor).any():
+                    break
 
-            # Get embedding for the new token.
-            next_token_embed = self.speech_emb(next_token)
-            next_token_embed = next_token_embed + self.speech_pos_emb.get_fixed_embedding(i + 1)
+            # Get embedding for the new token using cached embeddings
+            next_token_embed = self._speech_embedding_cache[next_token] + self._speech_pos_embedding_cache[i + 1]
+            next_token_embed = next_token_embed.to(self.patched_model.dtype)
 
-            #  For CFG
-            next_token_embed = torch.cat([next_token_embed, next_token_embed])
+            # For CFG
+            if cfg_weight > 0:
+                next_token_embed = torch.cat([next_token_embed, next_token_embed])
 
-            # Forward pass with only the new token and the cached past.
-            output = self.patched_model(
-                inputs_embeds=next_token_embed,
-                past_key_values=past,
-                output_attentions=False,
-                output_hidden_states=True,
-                return_dict=True,
-            )
-            # Update the kv_cache.
-            past = output.past_key_values
+            # Use compilation target for optimized forward pass
+            torch.compiler.cudagraph_mark_step_begin()
+            output_logits = self._step_compilation_target(next_token_embed, kv_cache)
 
         # Concatenate all predicted tokens along the sequence dimension.
         predicted_tokens = torch.cat(predicted, dim=1)  # shape: (B, num_tokens)
