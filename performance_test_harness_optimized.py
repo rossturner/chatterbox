@@ -340,8 +340,8 @@ def get_model_configs() -> List[Tuple[str, str, Optional[str]]]:
     return [
         ("Base Chatterbox", "pretrained", None),
         ("GRPO Fine-tuned (Nicole v1)", "local", str(GRPO_MODEL_PATH)),
-        # ("GRPO Fine-tuned (Nicole v2)", "local", str(GRPO_V3_MODEL_PATH)),
-        # ("LoRA Fine-tuned (Nicole v2)", "local", str(LORA_V2_MODEL_PATH))
+        ("GRPO Fine-tuned (Nicole v2)", "local", str(GRPO_V3_MODEL_PATH)),
+        ("LoRA Fine-tuned (Nicole v2)", "local", str(LORA_V2_MODEL_PATH))
     ]
 
 
