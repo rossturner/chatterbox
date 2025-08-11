@@ -51,7 +51,7 @@ RANDOM_SEED = 42  # For reproducible results
 # Optimization parameters
 USE_TORCH_COMPILE = True
 USE_BFLOAT16 = True
-REDUCED_CACHE_LEN = 600  # Reduced from 4096 for better performance
+REDUCED_CACHE_LEN = 1200  # Reduced from 4096 for better performance
 COMPILE_MODE = "reduce-overhead"  # or "max-autotune" for maximum optimization
 
 
