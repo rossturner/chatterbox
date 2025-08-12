@@ -54,3 +54,4 @@ models/
 **/*.wav
 !audio_data/*.wav
 !audio_data_v2/*.wav
+!audio_data_v3/*.wav

@@ -39,17 +39,17 @@ import time
 from collections import deque
 
 # Hardcoded configuration - OPTIMIZED FOR YOUR DATASET
-AUDIO_DATA_DIR = "./audio_data_v2"  # Updated to v2 directory
-BATCH_SIZE = 2  # Increased from 1 - you have plenty of GPU memory
-EPOCHS = 12  # Increased slightly for better convergence with your large dataset
+AUDIO_DATA_DIR = "./audio_data_v3"  # Updated to v2 directory
+BATCH_SIZE = 1  # Increased from 1 - you have plenty of GPU memory
+EPOCHS = 8  # Increased slightly for better convergence with your large dataset
 LEARNING_RATE = 1e-5  # Slightly higher - good dataset allows faster learning
 WARMUP_STEPS = 300  # Reduced - smaller warmup for your dataset size
-MAX_AUDIO_LENGTH = 10.5  # 95th percentile - covers 95% of samples without truncation
-MIN_AUDIO_LENGTH = 1.0
+MAX_AUDIO_LENGTH = 20
+MIN_AUDIO_LENGTH = 10
 LORA_RANK = 32  
 LORA_ALPHA = 64  
 LORA_DROPOUT = 0.15  # Increased dropout to reduce overfitting  
-GRADIENT_ACCUMULATION_STEPS = 4  # Reduced since we increased batch size
+GRADIENT_ACCUMULATION_STEPS = 8  # Reduced since we increased batch size
 SAVE_EVERY_N_STEPS = 150  # More frequent saves with larger dataset
 CHECKPOINT_DIR = "checkpoints_lora_v2"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
