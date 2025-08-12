@@ -104,7 +104,6 @@ Key example files demonstrate the streaming capabilities:
 
 ## Important Notes
 
-- All generated audio includes Perth watermarking for responsible AI usage
 - Streaming implementation achieves ~0.5 RTF (Real-Time Factor) on RTX 4090
 - Context window and chunk size parameters control latency vs quality tradeoffs
 - Models load from HuggingFace hub automatically via `from_pretrained()`

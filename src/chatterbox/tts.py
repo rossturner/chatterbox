@@ -6,7 +6,6 @@ from typing import Generator, Tuple, Optional
 import librosa
 import numpy as np
 import torch
-import perth
 import torch.nn.functional as F
 from huggingface_hub import hf_hub_download
 
@@ -135,7 +134,6 @@ class ChatterboxTTS:
         self.tokenizer = tokenizer
         self.device = device
         self.conds = conds
-        self.watermarker = perth.PerthImplicitWatermarker()
 
     @classmethod
     def from_local(cls, ckpt_dir, device) -> 'ChatterboxTTS':
@@ -269,8 +267,7 @@ class ChatterboxTTS:
                 ref_dict=self.conds.gen,
             )
             wav = wav.squeeze(0).detach().cpu().numpy()
-            watermarked_wav = self.watermarker.apply_watermark(wav, sample_rate=self.sr)
-        return torch.from_numpy(watermarked_wav).unsqueeze(0)
+        return torch.from_numpy(wav).unsqueeze(0)
 
     def inference_stream(
         self,
@@ -464,8 +461,7 @@ class ChatterboxTTS:
 
         # Compute audio duration and watermark
         audio_duration = len(audio_chunk) / self.sr
-        watermarked_chunk = self.watermarker.apply_watermark(audio_chunk, sample_rate=self.sr)
-        audio_tensor = torch.from_numpy(watermarked_chunk).unsqueeze(0)
+        audio_tensor = torch.from_numpy(audio_chunk).unsqueeze(0)
 
         # Update first‐chunk latency metric
         if metrics.chunk_count == 0:
