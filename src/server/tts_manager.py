@@ -14,6 +14,7 @@ from src.chatterbox.tts import ChatterboxTTS
 from src.chatterbox.models.s3gen import S3GEN_SR
 from .config import Config
 from .conditionals_manager import ConditionalsManager
+from .optimized_model_loader import OptimizedModelLoader
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,9 @@ class TTSManager:
         self.total_requests = 0
         self.total_generation_time = 0.0
         self.total_rtf = 0.0
+        
+        # Optimization info
+        self.optimization_info = {}
         
     def initialize(self, emotions_config: dict) -> None:
         """Initialize TTS model and prepare conditionals"""
@@ -58,46 +62,110 @@ class TTSManager:
         logger.info("TTS Manager initialized successfully")
     
     def _load_model(self) -> None:
-        """Load the TTS model based on configuration"""
+        """Load and optimize the TTS model based on configuration"""
         model_type = self.config.model.type
         model_path = self.config.model.path
         
-        logger.info(f"Loading {model_type} model on {self.device}...")
-        start_time = time.time()
+        # Check if optimizations are enabled (can be configured)
+        use_optimizations = getattr(self.config.model, 'use_optimizations', True)
         
-        try:
-            if model_type == "base":
-                # Load from HuggingFace
-                self.model = ChatterboxTTS.from_pretrained(self.device)
-                logger.info("Loaded base model from HuggingFace")
-                
-            elif model_type in ["grpo", "quantized"]:
-                # Load from local path
-                if not model_path:
-                    raise ValueError(f"Model path required for {model_type} model")
-                
+        if use_optimizations:
+            logger.info(f"Loading {model_type} model with optimizations on {self.device}...")
+            
+            # Use the optimized model loader
+            loader = OptimizedModelLoader(self.device)
+            
+            # Convert model_path to Path if needed
+            if model_path:
                 model_path = Path(model_path)
-                if not model_path.exists():
-                    raise FileNotFoundError(f"Model not found: {model_path}")
-                
-                self.model = ChatterboxTTS.from_local(model_path, self.device)
-                logger.info(f"Loaded {model_type} model from {model_path}")
-                
-            else:
-                raise ValueError(f"Unknown model type: {model_type}")
             
-            load_time = time.time() - start_time
-            logger.info(f"Model loaded in {load_time:.2f}s")
-            
-            # Report memory usage
-            if torch.cuda.is_available() and self.device == "cuda":
-                torch.cuda.synchronize()
-                memory_mb = torch.cuda.memory_allocated() / (1024 ** 2)
-                logger.info(f"GPU memory usage: {memory_mb:.1f} MB")
+            try:
+                # Load and optimize the model
+                self.model, self.optimization_info = loader.load_and_optimize(
+                    model_type=model_type,
+                    model_path=model_path
+                )
                 
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            raise
+                # Perform warmup compilation if torch.compile was applied
+                if self.optimization_info.get('torch_compile'):
+                    logger.info("Performing warmup to trigger torch.compile compilation...")
+                    
+                    # Try to find an audio file for warmup
+                    warmup_audio = None
+                    import glob
+                    search_patterns = [
+                        "configs/voice_samples/**/*.wav",
+                        "configs/voice_samples/*.wav",
+                        "audio_data/*.wav",
+                        "audio_data_v2/*.wav"
+                    ]
+                    
+                    for pattern in search_patterns:
+                        audio_files = glob.glob(pattern, recursive=True)
+                        if audio_files:
+                            warmup_audio = audio_files[0]
+                            break
+                    
+                    if warmup_audio:
+                        compilation_time = loader.warmup_model(
+                            self.model,
+                            warmup_text="This is a warmup run to trigger model compilation.",
+                            warmup_audio_path=warmup_audio
+                        )
+                        self.optimization_info['compilation_time'] = compilation_time
+                        logger.info(f"Model compilation complete! Ready for fast inference.")
+                    else:
+                        logger.warning("No audio files found for warmup. Model may not be fully optimized.")
+                
+                # Log optimization summary
+                logger.info(loader.get_optimization_summary(self.optimization_info))
+                
+            except Exception as e:
+                logger.error(f"Failed to load optimized model: {e}")
+                raise
+        else:
+            # Fall back to original loading method without optimizations
+            logger.info(f"Loading {model_type} model without optimizations on {self.device}...")
+            start_time = time.time()
+            
+            try:
+                if model_type == "base":
+                    # Load from HuggingFace
+                    self.model = ChatterboxTTS.from_pretrained(self.device)
+                    logger.info("Loaded base model from HuggingFace")
+                    
+                elif model_type in ["grpo", "quantized"]:
+                    # Load from local path
+                    if not model_path:
+                        raise ValueError(f"Model path required for {model_type} model")
+                    
+                    model_path = Path(model_path)
+                    if not model_path.exists():
+                        raise FileNotFoundError(f"Model not found: {model_path}")
+                    
+                    self.model = ChatterboxTTS.from_local(model_path, self.device)
+                    logger.info(f"Loaded {model_type} model from {model_path}")
+                    
+                else:
+                    raise ValueError(f"Unknown model type: {model_type}")
+                
+                load_time = time.time() - start_time
+                logger.info(f"Model loaded in {load_time:.2f}s")
+                
+                self.optimization_info = {
+                    'load_time': load_time,
+                    'optimizations_applied': False
+                }
+                
+            except Exception as e:
+                logger.error(f"Failed to load model: {e}")
+                raise
+        
+        # Report memory usage
+        if torch.cuda.is_available() and self.device == "cuda":
+            torch.cuda.synchronize()
+            memory_mb = torch.cuda.memory_allocated() / (1024 ** 2)
+            logger.info(f"GPU memory usage: {memory_mb:.1f} MB")
     
     def generate(
         self,
@@ -458,6 +526,17 @@ class TTSManager:
             metrics["vram_usage_mb"] = torch.cuda.memory_allocated() / (1024 ** 2)
         else:
             metrics["vram_usage_mb"] = None
+        
+        # Add optimization info if available
+        if self.optimization_info:
+            metrics["optimizations"] = {
+                "bfloat16": self.optimization_info.get('bfloat16', False),
+                "torch_compile": self.optimization_info.get('torch_compile', False),
+                "reduced_cache": self.optimization_info.get('reduced_cache', False),
+                "compile_mode": self.optimization_info.get('compile_mode'),
+                "compilation_time": self.optimization_info.get('compilation_time'),
+                "load_time": self.optimization_info.get('load_time')
+            }
         
         return metrics
     

@@ -10,6 +10,7 @@ model:
   path: "./models/nicole_v2/s3_quantized"  # for local models
   device: "cuda"
   keep_warm: true  # Keep model warm between requests
+  use_optimizations: true  # Enable torch.compile and other optimizations
   
 generation:
   default_temperature: 0.8

@@ -43,6 +43,7 @@ BASE_MODEL_TYPE = "pretrained"
 GRPO_MODEL_PATH = Path("./models/nicole_v1/base_grpo")
 GRPO_V3_MODEL_PATH = Path("./models/nicole_v2/grpo_v3")
 LORA_V2_MODEL_PATH = Path("./models/nicole_v2/lora_v2")
+LORA_V3_MODEL_PATH = Path("./models/nicole_v2/lora_v3")
 
 # Test parameters
 NUM_TEST_CASES = 3
@@ -339,9 +340,10 @@ def get_model_configs() -> List[Tuple[str, str, Optional[str]]]:
     """Get list of model configurations to test"""
     return [
         ("Base Chatterbox", "pretrained", None),
-        ("GRPO Fine-tuned (Nicole v1)", "local", str(GRPO_MODEL_PATH)),
+        # ("GRPO Fine-tuned (Nicole v1)", "local", str(GRPO_MODEL_PATH)),
         ("GRPO Fine-tuned (Nicole v2)", "local", str(GRPO_V3_MODEL_PATH)),
-        ("LoRA Fine-tuned (Nicole v2)", "local", str(LORA_V2_MODEL_PATH))
+        ("LoRA Fine-tuned (Nicole v2)", "local", str(LORA_V2_MODEL_PATH)),
+        ("LoRA Fine-tuned v3 (Nicole v2)", "local", str(LORA_V3_MODEL_PATH)),
     ]
 
 
@@ -647,60 +649,6 @@ def print_optimized_results(results: List[PerformanceResult], model_infos: List[
         
         print(f"{model_name:<35} {len(model_results):<6} {avg_gen_time:<9.2f} "
               f"{avg_rtf:<8.3f} {avg_tokens:<11.1f} {avg_vram:<10.1f}")
-    
-    # Optimization details
-    print("\n" + "-" * 120)
-    print("OPTIMIZATION DETAILS")
-    print("-" * 120)
-    
-    for model_info in model_infos:
-        print(f"\n{model_info.name}:")
-        print(f"  Load time: {model_info.load_time:.2f}s")
-        if model_info.compilation_time > 0:
-            print(f"  Compilation time: {model_info.compilation_time:.2f}s (one-time overhead)")
-        if model_info.optimization_details:
-            print(f"  Optimizations applied:")
-            for opt, enabled in model_info.optimization_details.items():
-                if enabled:
-                    print(f"    - {opt}: ✓")
-    
-    # Performance comparison
-    if len(models_results) > 1:
-        print(f"\n{'-' * 80}")
-        print("PERFORMANCE COMPARISON")
-        print(f"{'-' * 80}")
-        
-        baseline_results = list(models_results.values())[0]
-        baseline_tokens = sum(r.tokens_per_second for r in baseline_results) / len(baseline_results)
-        baseline_rtf = sum(r.rtf for r in baseline_results) / len(baseline_results)
-        
-        print(f"\nUsing '{list(models_results.keys())[0]}' as baseline:")
-        print(f"{'Model':<35} {'Tokens/s vs Base':<18} {'RTF vs Base':<15} {'Status'}")
-        print("-" * 80)
-        
-        for i, (model_name, model_results) in enumerate(models_results.items()):
-            avg_tokens = sum(r.tokens_per_second for r in model_results) / len(model_results)
-            avg_rtf = sum(r.rtf for r in model_results) / len(model_results)
-            
-            if i == 0:
-                tokens_diff = "baseline"
-                rtf_diff = "baseline"
-                status = "BASELINE"
-            else:
-                tokens_ratio = avg_tokens / baseline_tokens if baseline_tokens > 0 else 0
-                rtf_ratio = avg_rtf / baseline_rtf if baseline_rtf > 0 else 0
-                
-                tokens_diff = f"{tokens_ratio:.2f}x ({avg_tokens:.1f} tok/s)"
-                rtf_diff = f"{rtf_ratio:.2f}x"
-                
-                if tokens_ratio > 1.5:
-                    status = "✓ MUCH FASTER"
-                elif tokens_ratio > 1.0:
-                    status = "✓ FASTER"
-                else:
-                    status = "SLOWER"
-            
-            print(f"{model_name:<35} {tokens_diff:<18} {rtf_diff:<15} {status}")
     
     print(f"\n✓ All tests completed successfully")
     print(f"✓ Output files saved to: {OUTPUT_DIR.absolute()}")

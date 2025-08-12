@@ -24,6 +24,7 @@ class ModelConfig:
     path: Optional[str] = None
     device: str = "cuda"
     keep_warm: bool = True
+    use_optimizations: bool = True  # Enable torch.compile and other optimizations
 
 
 @dataclass

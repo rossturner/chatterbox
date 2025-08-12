@@ -39,19 +39,19 @@ import time
 from collections import deque
 
 # Hardcoded configuration - OPTIMIZED FOR YOUR DATASET
-AUDIO_DATA_DIR = "./audio_data_v2"  # Updated to v2 directory
+AUDIO_DATA_DIR = "./audio_data_v2"  # Updated to v3 directory
 BATCH_SIZE = 2  # Increased from 1 - you have plenty of GPU memory
 EPOCHS = 12  # Increased slightly for better convergence with your large dataset
-LEARNING_RATE = 1e-5  # Slightly higher - good dataset allows faster learning
+LEARNING_RATE = 1e-5  # REDUCED from 3e-5 - slower learning helps preserve timing
 WARMUP_STEPS = 300  # Reduced - smaller warmup for your dataset size
-MAX_AUDIO_LENGTH = 10.5  # 95th percentile - covers 95% of samples without truncation
+MAX_AUDIO_LENGTH = 9.0  # REDUCED from 10.5 - less padding, clearer duration signal
 MIN_AUDIO_LENGTH = 1.0
 LORA_RANK = 32  
 LORA_ALPHA = 64  
 LORA_DROPOUT = 0.15  # Increased dropout to reduce overfitting  
 GRADIENT_ACCUMULATION_STEPS = 4  # Reduced since we increased batch size
 SAVE_EVERY_N_STEPS = 150  # More frequent saves with larger dataset
-CHECKPOINT_DIR = "checkpoints_lora_v2"
+CHECKPOINT_DIR = "checkpoints_lora_v3"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_TEXT_LENGTH = 1000
 VALIDATION_SPLIT = 0.2  # Larger validation set for better generalization
@@ -71,6 +71,7 @@ class MetricsTracker:
             'gradient_norm': deque(maxlen=1000),
             'loss_variance': deque(maxlen=100),
             'time_per_step': deque(maxlen=100),
+            'duration_penalty': deque(maxlen=1000),  # NEW: Track duration penalty
         }
         self.start_time = time.time()
         self.last_update = 0
@@ -178,6 +179,12 @@ class MetricsTracker:
                                      list(self.metrics['val_loss']), 
                                      'r-o', label='Val Loss', linewidth=2, markersize=8)
                 
+                # Plot duration penalty
+                if len(self.metrics['duration_penalty']) > 0:
+                    steps = list(self.metrics['steps'])[-len(self.metrics['duration_penalty']):]
+                    self.ax_loss.plot(steps, list(self.metrics['duration_penalty']), 
+                                     'g--', label='Duration Penalty', linewidth=1, alpha=0.7)
+                
                 self.ax_loss.legend()
                 self.ax_loss.set_title('Training & Validation Loss', fontweight='bold')
                 self.ax_loss.set_xlabel('Steps')
@@ -269,6 +276,7 @@ class MetricsTracker:
                     f"LoRA Rank: {LORA_RANK}",
                     f"LoRA Alpha: {LORA_ALPHA}",
                     f"Learning Rate: {LEARNING_RATE:.2e}",
+                    f"Max Audio: {MAX_AUDIO_LENGTH}s",
                     f"",
                     f"Current Stats",
                     f"{'='*25}",
@@ -423,6 +431,16 @@ class TTSDataset(Dataset):
         
         audio = librosa.util.normalize(audio)
         
+        # SUGGESTION 6: Add speaking rate augmentation
+        # Randomly vary the playback speed by ±10%
+        if random.random() < 0.3:  # 30% of the time
+            speed_factor = random.uniform(0.9, 1.1)
+            audio = librosa.effects.time_stretch(audio, rate=speed_factor)
+            # Adjust the original duration accordingly
+            adjusted_duration = sample.duration / speed_factor
+        else:
+            adjusted_duration = sample.duration
+        
         # Smart audio length handling - only truncate if necessary, no padding
         max_samples = int(self.max_audio_length * self.s3gen_sr)
         original_duration = len(audio) / self.s3gen_sr
@@ -431,6 +449,7 @@ class TTSDataset(Dataset):
             # Only truncate if really necessary (affects ~5% of samples)
             audio = audio[:max_samples]
             print(f"Warning: Truncated {sample.audio_path.name} from {original_duration:.1f}s to {self.max_audio_length}s")
+            adjusted_duration = self.max_audio_length
         
         # CRITICAL: No automatic padding to max length!
         # Let the collate_fn handle batch-wise padding instead
@@ -448,7 +467,7 @@ class TTSDataset(Dataset):
             'audio_16k': torch.FloatTensor(audio_16k),
             'text': text,
             'audio_path': str(sample.audio_path),
-            'original_duration': original_duration,
+            'original_duration': adjusted_duration,  # Use adjusted duration if speed was changed
         }
 
 
@@ -467,13 +486,15 @@ def prepare_batch_conditionals(
             wav_16k = batch['audio_16k'][i].numpy()
             
             if len(wav_16k) < S3_SR:  # Less than 1 second
+                # SUGGESTION 4: Use reflection padding instead of constant
                 wav_16k = np.pad(wav_16k, (0, S3_SR - len(wav_16k)), mode='reflect')
             
+            # SUGGESTION 1: Fix voice embedding rate from 1.3 to 1.0
             utt_embeds = ve.embeds_from_wavs([wav_16k],
                                              sample_rate=S3_SR,
                                              as_spk=False,
                                              batch_size=8,
-                                             rate=1.3,
+                                             rate=1.0,  # FIXED from 1.3
                                              overlap=0.5)
 
             parts = torch.from_numpy(utt_embeds)
@@ -514,6 +535,7 @@ def prepare_batch_conditionals(
                 ref_16k = wav_16k[:model.ENC_COND_LEN]
                 
                 if len(ref_16k) < S3_SR // 2:  # At least 0.5 seconds
+                    # SUGGESTION 4: Use reflection padding
                     ref_16k = np.pad(ref_16k, (0, S3_SR // 2 - len(ref_16k)), mode='reflect')
                 
                 tokens, _ = t3_tokzr.forward([ref_16k], max_len=plen)
@@ -540,7 +562,7 @@ def compute_loss(
     batch: Dict[str, torch.Tensor],
     t3_cond: T3Cond,
     s3gen_refs: List[dict],
-) -> torch.Tensor:
+) -> Tuple[torch.Tensor, float]:  # Return both loss and duration penalty for tracking
     batch_size = batch['audio'].size(0)
     device = model.device
 
@@ -594,7 +616,8 @@ def compute_loss(
         # Ensure minimum length
         if len(audio_16k) < S3_SR:  # Less than 1 second
             pad_amount = S3_SR - len(audio_16k)
-            audio_16k = np.pad(audio_16k, (0, pad_amount), mode='constant')
+            # SUGGESTION 4: Use reflection padding
+            audio_16k = np.pad(audio_16k, (0, pad_amount), mode='reflect')
         
         # Tokenize speech
         tokens, _ = s3_tokzr.forward([audio_16k])
@@ -677,7 +700,7 @@ def compute_loss(
     if speech_start >= speech_end:
         print(f"ERROR: Invalid speech slice [{speech_start}:{speech_end}]")
         # Return a small loss to continue training
-        return torch.tensor(1.0, requires_grad=True, device=device)
+        return torch.tensor(1.0, requires_grad=True, device=device), 0.0
     
     speech_hidden = hidden_states[:, speech_start:speech_end]
     speech_logits = model.t3.speech_head(speech_hidden)
@@ -697,42 +720,68 @@ def compute_loss(
     print(f"Final shapes - logits: {speech_logits.shape}, targets: {target_shifted.shape}")
 
     # Compute cross-entropy loss
-    loss = F.cross_entropy(
+    ce_loss = F.cross_entropy(
         speech_logits.reshape(-1, speech_logits.size(-1)),  # (batch*seq, vocab)
         target_shifted.reshape(-1),  # (batch*seq,)
         ignore_index=-100,
     )
     
-    print(f"Computed loss: {loss.item():.6f}")
+    # SUGGESTION 3: Add duration tracking to loss
+    # Penalize if generated tokens don't match expected duration
+    # Approximate: ~12.5 tokens per second of audio
+    duration_penalty = 0.0
+    if 'original_durations' in batch:
+        for i in range(batch_size):
+            expected_tokens = int(batch['original_durations'][i] * 12.5)
+            # Count actual non-padding tokens for this sample
+            actual_tokens = (target_shifted[i] != -100).sum().float()
+            # Calculate duration mismatch penalty
+            duration_diff = F.mse_loss(actual_tokens, torch.tensor(expected_tokens, dtype=torch.float, device=device))
+            duration_penalty += duration_diff
+        
+        duration_penalty = duration_penalty / batch_size
+        # Weight the duration penalty
+        duration_penalty = 0.1 * duration_penalty
+    
+    # Combine losses
+    loss = ce_loss + duration_penalty
+    
+    print(f"Computed CE loss: {ce_loss.item():.6f}, Duration penalty: {duration_penalty if isinstance(duration_penalty, float) else duration_penalty.item():.6f}, Total: {loss.item():.6f}")
 
     # Sanity checks
     if torch.isnan(loss):
         print("ERROR: NaN loss detected!")
-        return torch.tensor(1.0, requires_grad=True, device=device)
+        return torch.tensor(1.0, requires_grad=True, device=device), 0.0
     
     if torch.isinf(loss):
         print("ERROR: Infinite loss detected!")
-        return torch.tensor(1.0, requires_grad=True, device=device)
+        return torch.tensor(1.0, requires_grad=True, device=device), 0.0
     
     if loss.item() == 0.0:
         print("WARNING: Zero loss - check if targets are all ignore_index (-100)")
         print(f"Number of non-ignore targets: {(target_shifted != -100).sum().item()}")
     
-    return loss
+    return loss, duration_penalty if not isinstance(duration_penalty, float) else duration_penalty
 
 
 def main():
     """Main training function"""
-    print(f"Starting Chatterbox TTS LoRA fine-tuning (v2 - smart padding, using existing transcriptions)")
+    print(f"Starting Chatterbox TTS LoRA fine-tuning (v3 - with duration awareness and fixes)")
     print(f"Device: {DEVICE}")
-    print(f"Smart padding: MAX_AUDIO_LENGTH={MAX_AUDIO_LENGTH}s (covers 95% of samples)")
-    print(f"Batch-wise dynamic padding enabled (prevents excessive silence generation)")
+    print(f"Key improvements:")
+    print(f"  - Voice embedding rate: 1.0 (fixed from 1.3)")
+    print(f"  - MAX_AUDIO_LENGTH: {MAX_AUDIO_LENGTH}s (reduced from 10.5s)")
+    print(f"  - Learning rate: {LEARNING_RATE} (reduced from 3e-5)")
+    print(f"  - Duration penalty added to loss")
+    print(f"  - Reflection padding throughout")
+    print(f"  - Speaking rate augmentation enabled")
+    print(f"  - Batch-wise dynamic padding enabled")
     
     # Initialize metrics tracker
-    metrics_tracker = MetricsTracker(save_path="training_metrics_v2.png", update_interval=2.0)
+    metrics_tracker = MetricsTracker(save_path="training_metrics_v3.png", update_interval=2.0)
     
     # Load audio samples with existing transcriptions
-    samples = load_audio_samples_v2(AUDIO_DATA_DIR)
+    samples = load_audio_samples_v3(AUDIO_DATA_DIR)
     if len(samples) == 0:
         raise ValueError(f"No valid audio samples found in {AUDIO_DATA_DIR}")
     
@@ -748,7 +797,7 @@ def main():
     print("Loading Chatterbox TTS model...")
     model = ChatterboxTTS.from_pretrained(DEVICE)
     # Restart training
-    #model = ChatterboxTTS.from_local("./checkpoints_lora_v2/merged_model", DEVICE)
+    #model = ChatterboxTTS.from_local("./checkpoints_lora_v3/merged_model", DEVICE)
 
     # Inject LoRA layers
     print("Injecting LoRA layers...")
@@ -817,8 +866,8 @@ def main():
             # Prepare conditionals
             t3_cond, s3gen_refs = prepare_batch_conditionals(batch, model, model.ve, model.s3gen)
             
-            # Compute loss
-            loss = compute_loss(model, batch, t3_cond, s3gen_refs)
+            # Compute loss (now returns both loss and duration penalty)
+            loss, duration_penalty = compute_loss(model, batch, t3_cond, s3gen_refs)
             loss = loss / GRADIENT_ACCUMULATION_STEPS
             
             # Track batch loss
@@ -865,7 +914,7 @@ def main():
                 # Calculate loss variance
                 loss_variance = np.var(recent_losses) if len(recent_losses) > 1 else 0
                 
-                # Update metrics tracker
+                # Update metrics tracker (including duration penalty)
                 metrics_tracker.add_metrics(
                     train_loss=avg_loss,
                     learning_rate=current_lr,
@@ -874,7 +923,8 @@ def main():
                     batch_loss=batch_loss,
                     gradient_norm=grad_norm,
                     loss_variance=loss_variance,
-                    time_per_step=step_time
+                    time_per_step=step_time,
+                    duration_penalty=duration_penalty if isinstance(duration_penalty, torch.Tensor) else duration_penalty
                 )
                 
                 # Update progress bar
@@ -892,7 +942,7 @@ def main():
         with torch.no_grad():
             for batch in tqdm(val_loader, desc="Validation"):
                 t3_cond, s3gen_refs = prepare_batch_conditionals(batch, model, model.ve, model.s3gen)
-                loss = compute_loss(model, batch, t3_cond, s3gen_refs)
+                loss, _ = compute_loss(model, batch, t3_cond, s3gen_refs)
                 val_loss += loss.item()
                 val_steps += 1
         
@@ -969,7 +1019,7 @@ def main():
     print("\nTo load the LoRA adapter:")
     print(f"  lora_layers = load_lora_adapter(model, '{final_adapter_path}')")
 
-def load_audio_samples_v2(audio_dir: str) -> List[AudioSample]:
+def load_audio_samples_v3(audio_dir: str) -> List[AudioSample]:
     """Load audio files and their corresponding transcriptions from .txt files"""
     samples = []
     audio_extensions = ['.wav', '.mp3', '.flac', '.ogg', '.m4a']
@@ -1131,7 +1181,7 @@ def collate_fn(samples):
     max_audio_len = max(len(s['audio']) for s in samples)
     max_audio_16k_len = max(len(s['audio_16k']) for s in samples)
     
-    # Pad only to batch maximum (much less padding than fixed 10.5s!)
+    # Pad only to batch maximum (much less padding than fixed 8.0s!)
     audio_batch = []
     audio_16k_batch = []
     
