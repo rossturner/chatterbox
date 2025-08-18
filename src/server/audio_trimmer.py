@@ -4,6 +4,7 @@ import re
 import subprocess
 import shlex
 import tempfile
+import os
 from pathlib import Path
 from typing import Optional, Tuple
 import threading
@@ -35,6 +36,14 @@ class AudioTrimmer:
         self.model: Optional[WhisperModel] = None
         self._model_lock = threading.Lock()
         
+        # Performance configuration
+        self.beam_size = int(os.environ.get('WHISPER_BEAM_SIZE', '2'))  # Optimized for speed/quality
+        self.cpu_threads = int(os.environ.get('WHISPER_CPU_THREADS', '0'))  # Auto-detect
+        self.use_vad = os.environ.get('WHISPER_USE_VAD', 'false').lower() == 'true'
+        
+        # Pre-generated warmup audio for performance
+        self._warmup_audio: Optional[np.ndarray] = None
+        
         # Performance tracking
         self.total_trims = 0
         self.total_trim_time = 0.0
@@ -49,13 +58,19 @@ class AudioTrimmer:
                     start_time = time.time()
                     
                     try:
-                        self.model = WhisperModel(
-                            self.model_size,
-                            device=self.device,
-                            compute_type="int8"  # Fastest inference
-                        )
+                        # CPU optimization parameters
+                        model_kwargs = {
+                            "device": self.device,
+                            "compute_type": "int8",  # Fastest inference
+                        }
+                        
+                        # Add CPU thread configuration if specified
+                        if self.cpu_threads > 0:
+                            model_kwargs["cpu_threads"] = self.cpu_threads
+                        
+                        self.model = WhisperModel(self.model_size, **model_kwargs)
                         load_time = time.time() - start_time
-                        logger.info(f"Faster-Whisper model loaded in {load_time:.2f}s")
+                        logger.info(f"Faster-Whisper model loaded in {load_time:.2f}s (beam_size={self.beam_size}, cpu_threads={self.cpu_threads}, vad={self.use_vad})")
                         
                     except Exception as e:
                         logger.error(f"Failed to load Faster-Whisper model: {e}")
@@ -225,95 +240,88 @@ class AudioTrimmer:
             # Load the Whisper model
             model = self._ensure_model_loaded()
             
-            # Create temporary WAV file for Whisper (16kHz mono for best performance)
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-                tmp_path = tmp_file.name
+            # Prepare audio for Whisper (avoid file I/O by using numpy arrays directly)
+            transcribe_start = time.time()
             
-            try:
-                # Resample to 16kHz if needed (Whisper's native sample rate)
-                if sample_rate != 16000:
-                    resampled = torchaudio.functional.resample(
-                        audio_1d.unsqueeze(0), sample_rate, 16000
-                    ).squeeze(0)
-                    working_sr = 16000
+            # Resample to 16kHz if needed (Whisper's native sample rate)
+            if sample_rate != 16000:
+                resampled = torchaudio.functional.resample(
+                    audio_1d.unsqueeze(0), sample_rate, 16000
+                ).squeeze(0)
+                working_sr = 16000
+            else:
+                resampled = audio_1d
+                working_sr = sample_rate
+            
+            # Convert to numpy array for direct processing (eliminates file I/O)
+            audio_np = resampled.cpu().numpy().astype(np.float32)
+            
+            # Transcribe with word timestamps using optimized settings
+            segments, _ = model.transcribe(
+                audio_np,  # Direct numpy array input (major performance boost)
+                word_timestamps=True,
+                beam_size=self.beam_size,  # Optimized beam size (default: 2)
+                temperature=0.0,
+                vad_filter=self.use_vad,  # Configurable VAD
+                condition_on_previous_text=False
+            )
+            transcribe_time = time.time() - transcribe_start
+            
+            # Extract recognized words with timestamps and full transcript
+            recognized_words = []
+            recognized_transcript_parts = []
+            
+            for segment in segments:
+                if segment.text:
+                    recognized_transcript_parts.append(segment.text.strip())
+                
+                if segment.words:
+                    for word in segment.words:
+                        if word.word and word.end:
+                            recognized_words.append((word.word.strip(), float(word.end)))
+            
+            # Combine transcript parts
+            recognized_transcript = " ".join(recognized_transcript_parts).strip()
+            
+            # Find the end time for trimming
+            end_time = self._find_end_time(recognized_words, intended_text)
+            
+            if end_time is not None:
+                # Whisper returns timestamps in seconds, use directly
+                # No need to scale by sample rate - time is time regardless of sample rate
+                end_time_original = end_time
+                
+                # Apply margin and calculate trim point
+                margin_seconds = margin_ms / 1000.0
+                fade_seconds = fade_ms / 1000.0
+                
+                cut_at = max(0.0, end_time_original + margin_seconds)
+                fade_start = max(0.0, cut_at - fade_seconds)
+                
+                # Convert to sample indices
+                cut_sample = min(len(audio_1d), int(cut_at * sample_rate))
+                fade_start_sample = max(0, int(fade_start * sample_rate))
+                
+                # Trim the audio
+                if cut_sample < len(audio_1d):
+                    trimmed_audio = audio_1d[:cut_sample]
+                    
+                    # Apply fade-out
+                    if fade_start_sample < cut_sample:
+                        fade_length = cut_sample - fade_start_sample
+                        if fade_length > 0:
+                            fade_curve = torch.linspace(1.0, 0.0, fade_length)
+                            trimmed_audio[fade_start_sample:cut_sample] *= fade_curve
+                    
+                    amount_trimmed = (len(audio_1d) - cut_sample) / sample_rate
                 else:
-                    resampled = audio_1d
-                    working_sr = sample_rate
-                
-                # Save as 16-bit WAV
-                torchaudio.save(tmp_path, resampled.unsqueeze(0), working_sr)
-                
-                # Transcribe with word timestamps
-                transcribe_start = time.time()
-                segments, _ = model.transcribe(
-                    tmp_path,
-                    word_timestamps=True,
-                    beam_size=1,
-                    temperature=0.0,
-                    vad_filter=False,
-                    condition_on_previous_text=False
-                )
-                transcribe_time = time.time() - transcribe_start
-                
-                # Extract recognized words with timestamps and full transcript
-                recognized_words = []
-                recognized_transcript_parts = []
-                
-                for segment in segments:
-                    if segment.text:
-                        recognized_transcript_parts.append(segment.text.strip())
-                    
-                    if segment.words:
-                        for word in segment.words:
-                            if word.word and word.end:
-                                recognized_words.append((word.word.strip(), float(word.end)))
-                
-                # Combine transcript parts
-                recognized_transcript = " ".join(recognized_transcript_parts).strip()
-                
-                # Find the end time for trimming
-                end_time = self._find_end_time(recognized_words, intended_text)
-                
-                if end_time is not None:
-                    # Whisper returns timestamps in seconds, use directly
-                    # No need to scale by sample rate - time is time regardless of sample rate
-                    end_time_original = end_time
-                    
-                    # Apply margin and calculate trim point
-                    margin_seconds = margin_ms / 1000.0
-                    fade_seconds = fade_ms / 1000.0
-                    
-                    cut_at = max(0.0, end_time_original + margin_seconds)
-                    fade_start = max(0.0, cut_at - fade_seconds)
-                    
-                    # Convert to sample indices
-                    cut_sample = min(len(audio_1d), int(cut_at * sample_rate))
-                    fade_start_sample = max(0, int(fade_start * sample_rate))
-                    
-                    # Trim the audio
-                    if cut_sample < len(audio_1d):
-                        trimmed_audio = audio_1d[:cut_sample]
-                        
-                        # Apply fade-out
-                        if fade_start_sample < cut_sample:
-                            fade_length = cut_sample - fade_start_sample
-                            if fade_length > 0:
-                                fade_curve = torch.linspace(1.0, 0.0, fade_length)
-                                trimmed_audio[fade_start_sample:cut_sample] *= fade_curve
-                        
-                        amount_trimmed = (len(audio_1d) - cut_sample) / sample_rate
-                    else:
-                        trimmed_audio = audio_1d
-                        amount_trimmed = 0.0
-                    
-                else:
-                    # No end time found, return original
                     trimmed_audio = audio_1d
                     amount_trimmed = 0.0
                 
-            finally:
-                # Clean up temporary file
-                Path(tmp_path).unlink(missing_ok=True)
+            else:
+                # No end time found, return original
+                trimmed_audio = audio_1d
+                amount_trimmed = 0.0
             
             # Restore original tensor format if needed
             if len(original_shape) > 1:
@@ -381,6 +389,19 @@ class AudioTrimmer:
             'device': self.device
         }
     
+    def _get_warmup_audio(self) -> np.ndarray:
+        """Get cached warmup audio, generating it once if needed."""
+        if self._warmup_audio is None:
+            # Create 1 second of 440Hz sine wave at 16kHz (standard warmup audio)
+            sample_rate = 16000
+            duration = 1.0
+            frequency = 440.0
+            
+            t = np.linspace(0, duration, int(sample_rate * duration))
+            self._warmup_audio = (0.3 * np.sin(2 * np.pi * frequency * t)).astype(np.float32)
+            
+        return self._warmup_audio
+    
     def warmup(self) -> float:
         """
         Warm up the Whisper model to eliminate first-request latency.
@@ -395,39 +416,21 @@ class AudioTrimmer:
             # Force model loading
             model = self._ensure_model_loaded()
             
-            # Create a short synthetic audio for warmup transcription
-            # 1 second of 440Hz sine wave at 16kHz (standard warmup audio)
-            sample_rate = 16000
-            duration = 1.0
-            frequency = 440.0
+            # Use cached warmup audio (eliminates file I/O during warmup)
+            synthetic_audio = self._get_warmup_audio()
             
-            t = np.linspace(0, duration, int(sample_rate * duration))
-            synthetic_audio = (0.3 * np.sin(2 * np.pi * frequency * t)).astype(np.float32)
+            # Perform warmup transcription using the same optimized settings as production
+            segments, _ = model.transcribe(
+                synthetic_audio,  # Direct numpy array (no file I/O)
+                word_timestamps=True,
+                beam_size=self.beam_size,  # Same as production
+                temperature=0.0,
+                vad_filter=self.use_vad,  # Same as production
+                condition_on_previous_text=False
+            )
             
-            # Create temporary WAV file for warmup
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-                tmp_path = tmp_file.name
-            
-            try:
-                # Save synthetic audio
-                torchaudio.save(tmp_path, torch.from_numpy(synthetic_audio).unsqueeze(0), sample_rate)
-                
-                # Perform warmup transcription (same settings as production)
-                segments, _ = model.transcribe(
-                    tmp_path,
-                    word_timestamps=True,
-                    beam_size=1,
-                    temperature=0.0,
-                    vad_filter=False,
-                    condition_on_previous_text=False
-                )
-                
-                # Consume the generator to complete the transcription
-                list(segments)
-                
-            finally:
-                # Clean up temporary file
-                Path(tmp_path).unlink(missing_ok=True)
+            # Consume the generator to complete the transcription
+            list(segments)
             
             warmup_time = time.time() - start_time
             logger.info(f"Faster-Whisper model warmed up in {warmup_time:.2f}s")
