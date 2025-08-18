@@ -1,4 +1,3 @@
-#!/bin/bash
 # Script to start the optimized Chatterbox server
 
 echo "======================================"
@@ -21,7 +20,7 @@ if [ -d ".venv" ]; then
 fi
 
 # Set performance environment variables
-export PYTORCH_CUDA_ALLOC_CONF='expandable_segments:True'
+export PYTORCH_CUDA_ALLOC_CONF='expandable_segments:True,max_split_size_mb:128'
 
 # Start the server
 python -m src.server.main

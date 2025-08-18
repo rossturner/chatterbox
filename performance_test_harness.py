@@ -40,11 +40,8 @@ OUTPUT_DIR = Path("./output")
 
 # Model paths
 BASE_MODEL_TYPE = "pretrained"
-GRPO_MODEL_PATH = Path("./models/nicole_v1/base_grpo")
 GRPO_V3_MODEL_PATH = Path("./models/nicole_v2/grpo_v3")
-LORA_V2_MODEL_PATH = Path("./models/nicole_v2/lora_v2")
 LORA_V2_2_MODEL_PATH = Path("./models/nicole_v2/lora_v2_2")
-LORA_V3_MODEL_PATH = Path("./models/nicole_v2/lora_v3")
 
 # Test parameters
 NUM_TEST_CASES = 3
@@ -341,11 +338,8 @@ def get_model_configs() -> List[Tuple[str, str, Optional[str]]]:
     """Get list of model configurations to test"""
     return [
         ("Base Chatterbox", "pretrained", None),
-        # ("GRPO Fine-tuned (Nicole v1)", "local", str(GRPO_MODEL_PATH)),
         ("GRPO Fine-tuned (Nicole v2)", "local", str(GRPO_V3_MODEL_PATH)),
-        # ("LoRA Fine-tuned (Nicole v2)", "local", str(LORA_V2_MODEL_PATH)),
         ("LoRA Fine-tuned v2.2 (Nicole v2)", "local", str(LORA_V2_2_MODEL_PATH)),
-        # ("LoRA Fine-tuned v3 (Nicole v2)", "local", str(LORA_V3_MODEL_PATH)),
     ]
 
 

@@ -6,8 +6,8 @@ server:
   busy_timeout: 1.0  # seconds to wait for lock
   
 model:
-  type: "quantized"  # "base", "grpo", or "quantized"
-  path: "./models/nicole_v2/s3_quantized"  # for local models
+  type: "grpo"  # "base", "grpo", or "quantized"
+  path: "./models/nicole_v2/lora_v2_2"  # for local models
   device: "cuda"
   keep_warm: true  # Keep model warm between requests
   use_optimizations: true  # Enable torch.compile and other optimizations
@@ -15,8 +15,8 @@ model:
 generation:
   default_temperature: 0.8
   default_cfg_weight: 0.5
-  max_text_length: 500
-  use_cuda_graphs: false  # Disable for now, can enable later
+  max_text_length: 1000
+  use_cuda_graphs: true
   
 caching:
   precompute_on_startup: true
@@ -40,5 +40,5 @@ websocket:
   
 performance:
   pin_memory: true  # Use pinned memory for transfers
-  torch_compile: false  # Disable for now to avoid complexity
+  torch_compile: true  # Disable for now to avoid complexity
   single_request_mode: true  # Optimize for single request processing

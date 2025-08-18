@@ -127,6 +127,7 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         model=config.model.type if config else "unknown",
+        model_path=config.model.path if config else None,
         emotions=list(emotions_config.keys()) if emotions_config else [],
         processing=generation_lock.is_busy,
         requests_processed=tts_manager.total_requests if tts_manager else 0

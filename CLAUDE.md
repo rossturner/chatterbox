@@ -102,6 +102,36 @@ Key example files demonstrate the streaming capabilities:
 - `gradio_tts_app.py`: Gradio web interface for TTS
 - `gradio_vc_app.py`: Gradio web interface for voice conversion
 
+## Server Setup
+
+### Starting the Optimized TTS Server
+
+The repository includes an optimized TTS server with 3-4x performance improvements:
+
+```bash
+# Activate virtual environment
+source .venv/bin/activate
+
+# Start the optimized server (recommended)
+./start_optimized_server.sh
+
+# Or start manually
+export PYTORCH_CUDA_ALLOC_CONF='expandable_segments:True'
+python -m src.server.main
+```
+
+**Server Features:**
+- REST API endpoints for TTS generation
+- WebSocket streaming support
+- Automatic performance optimizations (BFloat16, torch.compile, reduced cache)
+- One-time compilation warmup (~25-30s) for sustained 3-4x speed improvements
+- Serves on `http://localhost:8000` by default
+
+**Server Configuration:**
+- Edit `configs/server_config.yaml` for model selection and optimization settings
+- See `SERVER_OPTIMIZATION_GUIDE.md` for detailed performance information
+- Use `test_optimized_server.py` to verify server performance
+
 ## Important Notes
 
 - Streaming implementation achieves ~0.5 RTF (Real-Time Factor) on RTX 4090

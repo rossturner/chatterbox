@@ -197,11 +197,24 @@ class EmotionManager:
             self.conditionals_manager.clear_emotion_cache(emotion_id)
             
             # Delete the actual file if it's in our managed directory
-            if sample_path.startswith("configs/voice_samples/"):
-                sample_file = Path(sample_path)
-                if sample_file.exists():
-                    sample_file.unlink()
-                    logger.info(f"Deleted voice sample file '{sample_path}'")
+            sample_file = Path(sample_path)
+            if not sample_file.is_absolute():
+                sample_file = Path.cwd() / sample_file
+            
+            # Check if the file is within our voice samples directory for safety
+            voice_samples_abs = (Path.cwd() / "configs" / "voice_samples").resolve()
+            try:
+                sample_file_resolved = sample_file.resolve()
+                if sample_file_resolved.is_relative_to(voice_samples_abs):
+                    if sample_file.exists():
+                        sample_file.unlink()
+                        logger.info(f"Deleted voice sample file '{sample_path}'")
+                    else:
+                        logger.warning(f"Voice sample file not found: '{sample_path}'")
+                else:
+                    logger.warning(f"Voice sample file outside managed directory, not deleting: '{sample_path}'")
+            except (OSError, ValueError) as e:
+                logger.error(f"Error resolving path for deletion: '{sample_path}': {e}")
             
             logger.info(f"Removed voice sample '{sample_path}' from emotion '{emotion_id}'")
         

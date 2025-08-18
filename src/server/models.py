@@ -35,6 +35,7 @@ class HealthResponse(BaseModel):
     """Response model for health check"""
     status: str = Field(..., description="Server status")
     model: str = Field(..., description="Model type loaded")
+    model_path: Optional[str] = Field(None, description="Model path")
     emotions: List[str] = Field(..., description="Available emotions")
     processing: bool = Field(..., description="Whether currently processing a request")
     requests_processed: int = Field(..., description="Total requests processed")
