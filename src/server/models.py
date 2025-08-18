@@ -29,6 +29,12 @@ class GenerateResponse(BaseModel):
     queue_time: float = Field(..., description="Time spent waiting for lock in seconds")
     emotion_used: str = Field(..., description="Emotion that was used")
     text_normalized: str = Field(..., description="Normalized text that was synthesized")
+    
+    # Audio trimming metrics
+    alignment_time: Optional[float] = Field(None, description="Time spent on audio alignment and trimming in seconds")
+    original_duration: Optional[float] = Field(None, description="Original audio duration before trimming in seconds")
+    trimmed_amount: Optional[float] = Field(None, description="Amount of audio trimmed off in seconds")
+    total_rtf: Optional[float] = Field(None, description="Total RTF including generation and trimming time")
 
 
 class HealthResponse(BaseModel):

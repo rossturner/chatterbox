@@ -19,6 +19,10 @@ from .models.t3.modules.cond_enc import T3Cond
 
 REPO_ID = "ResembleAI/chatterbox"
 
+# Generation parameters
+TOP_P = 0.65
+REPETITION_PENALTY = 1.15
+
 
 def punc_norm(text: str) -> str:
     """
@@ -333,8 +337,8 @@ class ChatterboxTTS:
         chunk_buffer = []
 
         # Instantiate logits processors
-        top_p_warper = TopPLogitsWarper(top_p=0.8)
-        repetition_penalty_processor = RepetitionPenaltyLogitsProcessor(penalty=2.0)
+        top_p_warper = TopPLogitsWarper(top_p=TOP_P)
+        repetition_penalty_processor = RepetitionPenaltyLogitsProcessor(penalty=REPETITION_PENALTY)
 
         # Initial forward pass
         output = self.t3.patched_model(

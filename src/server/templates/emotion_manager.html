@@ -409,9 +409,50 @@
                         </button>
                         
                         <div id="generationInfo" style="margin-top: 15px; padding: 10px; background: #e6f3ff; border-radius: 6px; display: none;">
-                            <strong>Voice Sample Used:</strong> <span id="voiceSampleUsed"></span><br>
-                            <strong>Duration:</strong> <span id="audioDuration"></span> seconds<br>
-                            <strong>RTF:</strong> <span id="audioRTF"></span>
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff;"><strong>Voice Sample Used:</strong></td>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff;"><span id="voiceSampleUsed"></span></td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff;"><strong>Generation Time:</strong></td>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff;"><span id="generationTime"></span> seconds</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff;"><strong>Alignment & Trim Time:</strong></td>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff;"><span id="alignmentTime"></span> seconds</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff;"><strong>Final Audio Duration:</strong></td>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff;"><span id="audioDuration"></span> seconds</td>
+                                </tr>
+                                <tr id="trimmedRow" style="display: none;">
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff; color: #e53e3e;"><strong>Amount Trimmed:</strong></td>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff; color: #e53e3e;"><span id="trimmedAmount"></span> seconds</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff;"><strong>Generation RTF:</strong></td>
+                                    <td style="padding: 4px 8px; border-bottom: 1px solid #cce7ff;"><span id="audioRTF"></span></td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 4px 8px;"><strong>Total RTF (inc. trimming):</strong></td>
+                                    <td style="padding: 4px 8px;"><span id="totalRTF"></span></td>
+                                </tr>
+                            </table>
+                            
+                            <div id="transcriptInfo" style="margin-top: 15px; padding: 10px; background: #f0f8ff; border: 1px solid #bee5eb; border-radius: 6px; display: none;">
+                                <h4 style="margin: 0 0 10px 0; color: #0c5460;">Audio Transcript Analysis</h4>
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <tr>
+                                        <td style="padding: 4px 8px; border-bottom: 1px solid #bee5eb; width: 30%; vertical-align: top;"><strong>Intended Text:</strong></td>
+                                        <td style="padding: 4px 8px; border-bottom: 1px solid #bee5eb; font-family: monospace; background: #ffffff; border-radius: 3px;"><span id="intendedText"></span></td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 4px 8px; vertical-align: top;"><strong>Whisper Recognized:</strong></td>
+                                        <td style="padding: 4px 8px; font-family: monospace; background: #ffffff; border-radius: 3px;"><span id="recognizedTranscript"></span></td>
+                                    </tr>
+                                </table>
+                            </div>
                         </div>
                         
                         <audio id="testAudio" controls style="display: none;"></audio>
@@ -784,17 +825,48 @@
                     const voiceSampleUsed = response.headers.get('X-Voice-Sample-Used');
                     const duration = response.headers.get('X-Duration');
                     const rtf = response.headers.get('X-RTF');
+                    const generationTime = response.headers.get('X-Generation-Time');
+                    const alignmentTime = response.headers.get('X-Alignment-Time');
+                    const originalDuration = response.headers.get('X-Original-Duration');
+                    const trimmedAmount = response.headers.get('X-Trimmed-Amount');
+                    const totalRTF = response.headers.get('X-Total-RTF');
+                    const recognizedTranscript = response.headers.get('X-Recognized-Transcript');
+                    const intendedText = response.headers.get('X-Intended-Text');
+                    
+                    // Debug log for troubleshooting
+                    console.log('Debug - alignmentTime header:', alignmentTime);
                     
                     const audio = document.getElementById('testAudio');
                     audio.src = url;
                     audio.style.display = 'block';
                     audio.play();
                     
-                    // Show which voice sample was used
+                    // Show performance metrics
                     if (voiceSampleUsed) {
                         document.getElementById('voiceSampleUsed').textContent = voiceSampleUsed;
+                        document.getElementById('generationTime').textContent = parseFloat(generationTime || 0).toFixed(2);
+                        document.getElementById('alignmentTime').textContent = alignmentTime && parseFloat(alignmentTime) > 0 ? parseFloat(alignmentTime).toFixed(3) : 'N/A';
                         document.getElementById('audioDuration').textContent = parseFloat(duration).toFixed(2);
                         document.getElementById('audioRTF').textContent = parseFloat(rtf).toFixed(2);
+                        document.getElementById('totalRTF').textContent = totalRTF ? parseFloat(totalRTF).toFixed(2) : parseFloat(rtf).toFixed(2);
+                        
+                        // Show trimmed amount if any audio was trimmed
+                        if (trimmedAmount && parseFloat(trimmedAmount) > 0) {
+                            document.getElementById('trimmedAmount').textContent = parseFloat(trimmedAmount).toFixed(2);
+                            document.getElementById('trimmedRow').style.display = 'table-row';
+                        } else {
+                            document.getElementById('trimmedRow').style.display = 'none';
+                        }
+                        
+                        // Show transcript analysis if available
+                        if (recognizedTranscript && intendedText) {
+                            document.getElementById('intendedText').textContent = intendedText;
+                            document.getElementById('recognizedTranscript').textContent = recognizedTranscript;
+                            document.getElementById('transcriptInfo').style.display = 'block';
+                        } else {
+                            document.getElementById('transcriptInfo').style.display = 'none';
+                        }
+                        
                         document.getElementById('generationInfo').style.display = 'block';
                     }
                     

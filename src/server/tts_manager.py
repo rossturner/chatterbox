@@ -15,6 +15,7 @@ from src.chatterbox.models.s3gen import S3GEN_SR
 from .config import Config
 from .conditionals_manager import ConditionalsManager
 from .optimized_model_loader import OptimizedModelLoader
+from .audio_trimmer import AudioTrimmer
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,16 @@ class TTSManager:
         self.conditionals_manager = ConditionalsManager(Path(config.caching.conditionals_dir))
         self.device = config.model.device
         self.sample_rate = S3GEN_SR
+        
+        # Initialize audio trimmer if enabled
+        self.audio_trimmer: Optional[AudioTrimmer] = None
+        self.enable_audio_trimming = getattr(config.model, 'enable_audio_trimming', True)
+        
+        if self.enable_audio_trimming:
+            self.audio_trimmer = AudioTrimmer(model_size="tiny.en", device="cpu")
+            logger.info("Audio trimmer initialized (Faster-Whisper tiny.en on CPU)")
+        else:
+            logger.info("Audio trimming disabled in configuration")
         
         # Metrics tracking
         self.loaded_at = None
@@ -57,6 +68,14 @@ class TTSManager:
         else:
             logger.info("Loading existing conditionals from cache...")
             self.conditionals_manager.load_all_to_ram()
+        
+        # Warm up audio trimmer if enabled
+        if self.enable_audio_trimming and self.audio_trimmer:
+            try:
+                warmup_time = self.audio_trimmer.warmup()
+                logger.info(f"Audio trimmer warmed up successfully in {warmup_time:.2f}s")
+            except Exception as e:
+                logger.warning(f"Audio trimmer warmup failed (non-fatal): {e}")
         
         self.loaded_at = datetime.utcnow()
         logger.info("TTS Manager initialized successfully")
@@ -174,7 +193,7 @@ class TTSManager:
         temperature: float = 0.8,
         cfg_weight: float = 0.5,
         exaggeration: Optional[float] = None
-    ) -> Tuple[torch.Tensor, float, float, str, str]:
+    ) -> Tuple[torch.Tensor, float, float, str, str, Optional[dict]]:
         """
         Generate speech for text with specified emotion.
         
@@ -186,7 +205,7 @@ class TTSManager:
             exaggeration: Optional exaggeration override
             
         Returns:
-            Tuple of (audio_tensor, duration, generation_time, emotion_used, voice_sample_used)
+            Tuple of (audio_tensor, duration, generation_time, emotion_used, voice_sample_used, trim_metrics)
         """
         if not self.model:
             raise RuntimeError("Model not initialized")
@@ -232,18 +251,40 @@ class TTSManager:
             )
             generation_time = time.time() - start_time
             
-            # Calculate duration
-            duration = len(audio_tensor.squeeze()) / self.sample_rate
+            # Calculate original duration
+            original_duration = len(audio_tensor.squeeze()) / self.sample_rate
+            
+            # Apply audio trimming if enabled
+            trim_metrics = None
+            if self.enable_audio_trimming and self.audio_trimmer:
+                try:
+                    audio_tensor, alignment_time, trim_metrics = self.audio_trimmer.trim_audio(
+                        audio_tensor, self.sample_rate, text
+                    )
+                    logger.debug(f"Audio trimming completed in {alignment_time:.3f}s")
+                except Exception as e:
+                    logger.warning(f"Audio trimming failed, using original audio: {e}")
+                    trim_metrics = {'error': str(e), 'alignment_time': 0.0}
+            
+            # Calculate final duration (after trimming)
+            final_duration = len(audio_tensor.squeeze()) / self.sample_rate
             
             # Update metrics
             self.total_requests += 1
             self.total_generation_time += generation_time
-            rtf = generation_time / duration if duration > 0 else 0
+            rtf = generation_time / final_duration if final_duration > 0 else 0
             self.total_rtf += rtf
             
-            logger.info(f"Generated {duration:.2f}s audio in {generation_time:.2f}s (RTF: {rtf:.3f}) using {voice_sample_used}")
+            # Log generation results
+            if trim_metrics and trim_metrics.get('amount_trimmed', 0) > 0:
+                logger.info(f"Generated {final_duration:.2f}s audio (trimmed from {original_duration:.2f}s, "
+                           f"removed {trim_metrics['amount_trimmed']:.2f}s) in {generation_time:.2f}s "
+                           f"(RTF: {rtf:.3f}) using {voice_sample_used}")
+            else:
+                logger.info(f"Generated {final_duration:.2f}s audio in {generation_time:.2f}s "
+                           f"(RTF: {rtf:.3f}) using {voice_sample_used}")
             
-            return audio_tensor, duration, generation_time, emotion, voice_sample_used
+            return audio_tensor, final_duration, generation_time, emotion, voice_sample_used, trim_metrics
             
         finally:
             # Clean up GPU memory if configured
@@ -545,6 +586,9 @@ class TTSManager:
         if self.model:
             del self.model
             self.model = None
+        
+        if self.audio_trimmer:
+            self.audio_trimmer.cleanup()
         
         self.conditionals_manager.clear_cache()
         

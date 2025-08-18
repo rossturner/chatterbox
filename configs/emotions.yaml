@@ -3,65 +3,73 @@ emotions:
     name: happy
     exaggeration: 0.5
     voice_samples:
-    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/happy/Galgame_Chapter1_Nicole_08.wav
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/happy/GalGame_Chapter050_Nicole_010_009.wav
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/happy/Galgame_GoldenWeek_Nicole_11.wav
     - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/happy/Galgame_GoldenWeek_Nicole_12.wav
     created_at: '2025-08-08T21:24:03.656074'
-    updated_at: '2025-08-13T19:55:26.811485'
+    updated_at: '2025-08-18T20:13:02.938224'
   sad:
     name: sad
-    exaggeration: 0.3
+    exaggeration: 0.5
     voice_samples:
     - audio_data/Comic_Chapter0_Nicole_019.wav
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/sad/combined_022.wav
     created_at: '2025-08-08T21:24:03.656105'
-    updated_at: '2025-08-09T19:30:10.402892'
+    updated_at: '2025-08-18T20:36:12.764846'
   neutral:
     name: neutral
     exaggeration: 0.5
-    voice_samples: []
+    voice_samples:
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/neutral/GalGame_Chapter050_Nicole_060_005.wav
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/neutral/Galgame_GoldenWeek_Nicole_09.wav
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/neutral/Galgame_Chapter1_Nicole_08.wav
     created_at: '2025-08-08T21:24:03.656109'
-    updated_at: '2025-08-12T22:07:04.342286'
+    updated_at: '2025-08-18T20:47:32.650391'
   excited:
     name: excited
-    exaggeration: 0.85
+    exaggeration: 0.5
     voice_samples:
     - audio_data/GalGame_Chapter050_Nicole_010_001.wav
     - audio_data/GalGame_Chapter050_Nicole_010_003.wav
-    - audio_data/Accompany_Nicole_Event04_05.wav
     created_at: '2025-08-08T21:24:03.656112'
-    updated_at: '2025-08-08T21:24:03.656112'
+    updated_at: '2025-08-18T21:02:10.496213'
   angry:
     name: angry
     exaggeration: 0.5
     voice_samples:
-    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/angry/Chessboard_Limbo_CommonAvatar_Nicole_015.wav
-    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/angry/GalGame_Chapter050_Nicole_010_004.wav
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/angry/combined_003.wav
     created_at: '2025-08-08T21:24:03.656115'
-    updated_at: '2025-08-09T19:28:18.047550'
+    updated_at: '2025-08-18T20:22:55.817566'
   afraid:
     name: afraid
     exaggeration: 0.5
-    voice_samples: []
+    voice_samples:
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/afraid/combined_021.wav
     created_at: '2025-08-09T07:59:10.595105'
-    updated_at: '2025-08-09T08:17:04.572213'
+    updated_at: '2025-08-18T20:30:58.938046'
   smug:
     name: smug
     exaggeration: 0.4
     voice_samples:
     - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/smug/Comic_Chapter0_Nicole_007.wav
     created_at: '2025-08-09T07:59:36.416868'
-    updated_at: '2025-08-09T19:29:31.961054'
+    updated_at: '2025-08-18T20:23:58.074831'
   embarrassed:
     name: embarrassed
     exaggeration: 0.5
-    voice_samples: []
+    voice_samples:
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/embarrassed/GalGame_Chapter050_Nicole_030_013.wav
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/embarrassed/GalGame_Chapter050_Nicole_060_003.wav
     created_at: '2025-08-09T07:59:47.151178'
-    updated_at: '2025-08-09T07:59:47.151178'
+    updated_at: '2025-08-18T20:02:27.211786'
   confused:
     name: confused
-    exaggeration: 0.5
-    voice_samples: []
+    exaggeration: 0.4
+    voice_samples:
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/confused/Galgame_Chapter1_Nicole_43.wav
+    - /home/ross/workspace/chatterbox-streaming/configs/voice_samples/confused/combined_020.wav
     created_at: '2025-08-09T08:00:29.389591'
-    updated_at: '2025-08-09T08:00:29.389591'
+    updated_at: '2025-08-18T20:26:54.532473'
   flirty:
     name: flirty
     exaggeration: 0.5

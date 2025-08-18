@@ -1,0 +1,89 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache and build files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Git files
+.git/
+.gitignore
+
+# Development and training scripts
+grpo.py
+grpo_v3_modular.py
+lora.py
+lora_v2.py
+lora_v3.py
+loadandmergecheckpoint.py
+voice_conversion.py
+
+# Example and test files
+example_*.py
+gradio_*.py
+*_test.py
+test_*.py
+performance_test_harness.py
+websocket_performance_test.py
+test_compiled_performance_simple.py
+test_optimized_server.py
+combine_audio_clips.py
+
+# Output and results
+output/
+results/
+logs/
+*.log
+
+# Documentation and markdown files (keeping only essential ones)
+README.md
+*.md
+!CLAUDE.md
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Model checkpoints and training data not needed for production
+quantized_models/
+models/nicole_v2/grpo_v3/
+
+# Alternative audio data (keeping only main audio_data/)
+audio_data_v2/
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Coverage and profiling
+.coverage
+*.cover
+.hypothesis/
+.prof
+
+# Environment files
+.env
+.env.local
+.env.*.local

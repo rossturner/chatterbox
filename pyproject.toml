@@ -23,6 +23,8 @@ dependencies = [
     "whisper-openai",
     "jiwer",
     "sounddevice==0.5.2",
+    # Audio processing dependencies
+    "faster-whisper>=1.0.0",
     # Server dependencies
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.20.0",

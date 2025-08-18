@@ -184,7 +184,7 @@ def generate_speech(request: GenerateRequest):
         text_normalized = normalize_text(request.text)
         
         # Generate audio
-        audio_tensor, duration, generation_time, emotion_used, voice_sample_used = tts_manager.generate(
+        audio_tensor, duration, generation_time, emotion_used, voice_sample_used, trim_metrics = tts_manager.generate(
             text=text_normalized,
             emotion=request.emotion,
             temperature=request.temperature,
@@ -198,6 +198,12 @@ def generate_speech(request: GenerateRequest):
         # Calculate RTF
         rtf = generation_time / duration if duration > 0 else 0
         
+        # Calculate total RTF including trimming time if available
+        total_rtf = rtf
+        if trim_metrics and trim_metrics.get('trim_time'):
+            total_time = generation_time + trim_metrics['trim_time']
+            total_rtf = total_time / duration if duration > 0 else 0
+        
         # Update last request time
         last_request_time = datetime.utcnow()
         
@@ -208,7 +214,11 @@ def generate_speech(request: GenerateRequest):
             generation_time=generation_time,
             queue_time=queue_time,
             emotion_used=emotion_used,
-            text_normalized=text_normalized
+            text_normalized=text_normalized,
+            alignment_time=trim_metrics.get('alignment_time') if trim_metrics else None,
+            original_duration=trim_metrics.get('original_duration') if trim_metrics else None,
+            trimmed_amount=trim_metrics.get('amount_trimmed') if trim_metrics else None,
+            total_rtf=total_rtf
         )
         
     except Exception as e:
@@ -259,7 +269,7 @@ def generate_speech_raw(request: GenerateRequest):
         text_normalized = normalize_text(request.text)
         
         # Generate audio
-        audio_tensor, duration, generation_time, emotion_used, voice_sample_used = tts_manager.generate(
+        audio_tensor, duration, generation_time, emotion_used, voice_sample_used, trim_metrics = tts_manager.generate(
             text=text_normalized,
             emotion=request.emotion,
             temperature=request.temperature,
@@ -270,22 +280,46 @@ def generate_speech_raw(request: GenerateRequest):
         # Get WAV bytes
         audio_bytes = tts_manager.get_audio_bytes(audio_tensor)
         
+        # Calculate total RTF including trimming time if available
+        rtf = generation_time / duration if duration > 0 else 0
+        total_rtf = rtf
+        if trim_metrics and trim_metrics.get('trim_time'):
+            total_time = generation_time + trim_metrics['trim_time']
+            total_rtf = total_time / duration if duration > 0 else 0
+        
         # Update last request time
         last_request_time = datetime.utcnow()
+        
+        # Prepare headers
+        headers = {
+            "X-Duration": str(duration),
+            "X-RTF": str(rtf),
+            "X-Generation-Time": str(generation_time),
+            "X-Queue-Time": str(queue_time),
+            "X-Emotion-Used": emotion_used,
+            "X-Voice-Sample-Used": voice_sample_used,
+            "X-Text-Normalized": text_normalized,
+            "X-Total-RTF": str(total_rtf)
+        }
+        
+        # Add trimming metrics to headers if available
+        if trim_metrics:
+            if 'trim_time' in trim_metrics and trim_metrics['trim_time'] is not None:
+                headers["X-Alignment-Time"] = str(trim_metrics['trim_time'])
+            if 'original_duration' in trim_metrics and trim_metrics['original_duration'] is not None:
+                headers["X-Original-Duration"] = str(trim_metrics['original_duration'])
+            if 'amount_trimmed' in trim_metrics and trim_metrics['amount_trimmed'] is not None:
+                headers["X-Trimmed-Amount"] = str(trim_metrics['amount_trimmed'])
+            if 'recognized_transcript' in trim_metrics:
+                headers["X-Recognized-Transcript"] = trim_metrics['recognized_transcript']
+            if 'intended_text' in trim_metrics:
+                headers["X-Intended-Text"] = trim_metrics['intended_text']
         
         # Return raw audio with appropriate headers
         return Response(
             content=audio_bytes,
             media_type="audio/wav",
-            headers={
-                "X-Duration": str(duration),
-                "X-RTF": str(generation_time / duration if duration > 0 else 0),
-                "X-Generation-Time": str(generation_time),
-                "X-Queue-Time": str(queue_time),
-                "X-Emotion-Used": emotion_used,
-                "X-Voice-Sample-Used": voice_sample_used,
-                "X-Text-Normalized": text_normalized
-            }
+            headers=headers
         )
         
     except Exception as e:
@@ -464,7 +498,7 @@ async def test_emotion(emotion_id: str, request: EmotionTestRequest):
         text_normalized = normalize_text(request.text)
         
         # Generate audio with test parameters
-        audio_tensor, duration, generation_time, emotion_used, voice_sample_used = tts_manager.generate(
+        audio_tensor, duration, generation_time, emotion_used, voice_sample_used, trim_metrics = tts_manager.generate(
             text=text_normalized,
             emotion=emotion_id,
             temperature=request.temperature,
@@ -475,21 +509,45 @@ async def test_emotion(emotion_id: str, request: EmotionTestRequest):
         # Get WAV bytes
         audio_bytes = tts_manager.get_audio_bytes(audio_tensor)
         
+        # Calculate total RTF including trimming time if available
+        rtf = generation_time / duration if duration > 0 else 0
+        total_rtf = rtf
+        if trim_metrics and trim_metrics.get('trim_time'):
+            total_time = generation_time + trim_metrics['trim_time']
+            total_rtf = total_time / duration if duration > 0 else 0
+        
         # Extract just the filename from the path for display
         sample_filename = Path(voice_sample_used).name if voice_sample_used else "unknown"
+        
+        # Prepare headers
+        headers = {
+            "X-Duration": str(duration),
+            "X-RTF": str(rtf),
+            "X-Generation-Time": str(generation_time),
+            "X-Emotion": emotion_id,
+            "X-Voice-Sample-Used": sample_filename,
+            "X-Exaggeration": str(request.exaggeration or emotion.exaggeration),
+            "X-Total-RTF": str(total_rtf)
+        }
+        
+        # Add trimming metrics to headers if available
+        if trim_metrics:
+            if 'trim_time' in trim_metrics and trim_metrics['trim_time'] is not None:
+                headers["X-Alignment-Time"] = str(trim_metrics['trim_time'])
+            if 'original_duration' in trim_metrics and trim_metrics['original_duration'] is not None:
+                headers["X-Original-Duration"] = str(trim_metrics['original_duration'])
+            if 'amount_trimmed' in trim_metrics and trim_metrics['amount_trimmed'] is not None:
+                headers["X-Trimmed-Amount"] = str(trim_metrics['amount_trimmed'])
+            if 'recognized_transcript' in trim_metrics:
+                headers["X-Recognized-Transcript"] = trim_metrics['recognized_transcript']
+            if 'intended_text' in trim_metrics:
+                headers["X-Intended-Text"] = trim_metrics['intended_text']
         
         # Return audio with metadata
         return Response(
             content=audio_bytes,
             media_type="audio/wav",
-            headers={
-                "X-Duration": str(duration),
-                "X-RTF": str(generation_time / duration if duration > 0 else 0),
-                "X-Generation-Time": str(generation_time),
-                "X-Emotion": emotion_id,
-                "X-Voice-Sample-Used": sample_filename,
-                "X-Exaggeration": str(request.exaggeration or emotion.exaggeration)
-            }
+            headers=headers
         )
         
     except Exception as e:

@@ -52,6 +52,7 @@ models/
 
 # Ignore generated sample .wav files (but allow audio_data/*.wav and audio_data_v2/*.wav)
 **/*.wav
+!configs/**/*.wav
 !audio_data/*.wav
 !audio_data_v2/*.wav
 !audio_data_v3/*.wav
