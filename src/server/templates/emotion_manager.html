@@ -870,7 +870,6 @@
                         document.getElementById('generationInfo').style.display = 'block';
                     }
                     
-                    showMessage('Audio generated successfully');
                 } else {
                     const error = await response.json();
                     showMessage(error.detail || 'Generation failed', 'error');
