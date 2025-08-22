@@ -268,5 +268,28 @@ class EmotionManager:
             return relative_path
         except ValueError as e:
             logger.error(f"Error generating relative path for {sample_path} relative to {Path.cwd()}: {e}")
-            # Fall back to absolute path
-            return str(sample_path.resolve())
+            # Fall back to relative path from expected project root instead of absolute path
+            # Assume we're in the project root and construct relative path manually
+            project_root = Path.cwd()
+            if sample_path.is_absolute():
+                # Try to find common path components to construct relative path
+                parts = sample_path.parts
+                if 'configs' in parts:
+                    # Find configs directory and construct relative path from there
+                    configs_index = parts.index('configs')
+                    relative_parts = parts[configs_index:]
+                    relative_path = str(Path(*relative_parts))
+                elif 'audio_data' in parts:
+                    # Find audio_data directory and construct relative path from there
+                    audio_data_index = parts.index('audio_data')
+                    relative_parts = parts[audio_data_index:]
+                    relative_path = str(Path(*relative_parts))
+                else:
+                    # Last resort: use filename only (not ideal but better than absolute path)
+                    relative_path = sample_path.name
+            else:
+                # Already relative, use as-is
+                relative_path = str(sample_path)
+            
+            logger.info(f"Generated fallback relative path: {relative_path}")
+            return relative_path

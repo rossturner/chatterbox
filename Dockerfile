@@ -38,6 +38,7 @@ RUN pip install --no-cache-dir \
     "whisper-openai" \
     "jiwer" \
     "sounddevice==0.5.2" \
+    "faster-whisper>=1.0.0" \
     "fastapi>=0.100.0" \
     "uvicorn[standard]>=0.20.0" \
     "pydantic>=2.0.0" \
