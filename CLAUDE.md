@@ -50,29 +50,13 @@ This is a streaming TTS (Text-to-Speech) implementation of Chatterbox, featuring
 
 Both training scripts expect audio files in `audio_data/` directory and generate training metrics visualizations.
 
-## GRPO Fine-tuned Model
+## Available Models
 
-This repository includes a GRPO (Group Relative Policy Optimization) fine-tuned model that has been optimized for improved performance. The GRPO training process enhances the base model's ability to generate high-quality speech while maintaining reasonable computational requirements.
+Fine-tuned models are available in `./models/nicole_v2/` directory:
+- **lora_v2_2**: LoRA fine-tuned model
+- **grpo_v3**: GRPO fine-tuned model
 
-### Quantized Model Variants
-
-The GRPO fine-tuned model has been quantized using multiple techniques to reduce memory usage while maintaining quality:
-
-- **Original GRPO**: Full precision model (~3GB, baseline performance)
-- **Float16 Weights**: Half-precision quantization (~1.5GB, 50% size reduction, 27% VRAM reduction)
-- **Mixed Precision**: Strategic precision reduction (~1.5GB, similar performance to float16)
-
-### Model Performance Comparison
-
-Performance metrics on RTX 4090 with creative test content:
-
-| Model | Size (MB) | Peak VRAM (GB) | Avg RTF | Avg Gen Time (s) | Quality |
-|-------|-----------|----------------|---------|------------------|---------|
-| Original GRPO | 3045 | 4.97 | 0.77 | 8.35 | Baseline |
-| Float16 Weights | 1523 | 3.62 | 0.74 | 8.17 | Excellent |
-| Mixed Precision | 1523 | 3.61 | 0.76 | 8.24 | Excellent |
-
-All quantized variants maintain excellent speech quality while achieving significant memory savings. The quantized models are located in `quantized_models/` directory.
+The server configuration (`configs/server_config.yaml`) controls which model is loaded. Models are automatically downloaded from HuggingFace Hub if not found locally.
 
 ### Performance Testing
 
@@ -93,20 +77,29 @@ python3 performance_test_harness.py
 
 The test harness randomly selects 3 reference audio files and 3 transcripts (mismatched), then tests each model combination. Results are saved to `./output/` directory with detailed performance comparison tables.
 
-## Usage Examples
+## Usage
 
-Key example files demonstrate the streaming capabilities:
+**The server is the primary way to use this system.** Start the server and use the REST API or WebSocket endpoints for TTS generation.
+
+### Example Files
+
+For development and testing, example files are available:
 - `example_tts_stream.py`: Streaming TTS with real-time audio playback
 - `example_vc_stream.py`: Voice conversion streaming
 - `example_for_mac.py`: macOS-specific audio handling
 - `gradio_tts_app.py`: Gradio web interface for TTS
 - `gradio_vc_app.py`: Gradio web interface for voice conversion
 
-## Server Setup
+### Testing Scripts
 
-### Starting the Optimized TTS Server
+- `test_optimized_server.py`: Test server performance and functionality
+- `websocket_performance_test.py`: Test WebSocket streaming performance
 
-The repository includes an optimized TTS server with 3-4x performance improvements:
+## Server (Primary Usage)
+
+The server is the recommended way to use Chatterbox Streaming, providing a production-ready TTS service with comprehensive API endpoints.
+
+### Starting the Server
 
 ```bash
 # Activate virtual environment
@@ -116,25 +109,57 @@ source .venv/bin/activate
 ./start_optimized_server.sh
 
 # Or start manually
-export PYTORCH_CUDA_ALLOC_CONF='expandable_segments:True'
+export PYTORCH_CUDA_ALLOC_CONF='expandable_segments:True,max_split_size_mb:128'
 python -m src.server.main
 ```
 
-**Server Features:**
-- REST API endpoints for TTS generation
-- WebSocket streaming support
-- Automatic performance optimizations (BFloat16, torch.compile, reduced cache)
-- One-time compilation warmup (~25-30s) for sustained 3-4x speed improvements
-- Serves on `http://localhost:8000` by default
+### Server Features
 
-**Server Configuration:**
-- Edit `configs/server_config.yaml` for model selection and optimization settings
-- See `SERVER_OPTIMIZATION_GUIDE.md` for detailed performance information
-- Use `test_optimized_server.py` to verify server performance
+**REST API Endpoints:**
+- `/generate` - Main TTS generation endpoint
+- `/generate/raw` - Raw audio generation with file upload support
+- `/emotions/*` - Emotion management endpoints (create, update, delete emotions)
+- `/model/info` - Model information and status
+- `/status` - Server status and metrics
+- `/health` - Health check endpoint
+
+**WebSocket Streaming:**
+- `/ws/generate` - Real-time streaming TTS generation
+- `/ws/stats` and `/ws/metrics` - Connection monitoring and metrics
+
+**Production Features:**
+- Automatic performance optimizations (BFloat16, torch.compile)
+- Request locking for thread safety
+- Model warmup and conditionals caching
+- Audio trimming with Whisper alignment
+- Emotion system with configurable voice samples
+- Comprehensive error handling and logging
+
+### Server Configuration
+
+Edit `configs/server_config.yaml` to control:
+- Model selection (base, grpo, or local models from `./models/`)
+- Performance optimizations and CUDA settings
+- WebSocket streaming configuration
+- Caching and warmup behavior
+- Audio trimming settings
+
+See `SERVER_OPTIMIZATION_GUIDE.md` for detailed performance information.
+
+## Audio Trimming
+
+The server includes an intelligent audio trimming system (`src/server/audio_trimmer.py`) that automatically improves output quality:
+
+- **Whisper-based Alignment**: Uses Faster-Whisper to transcribe generated audio and compare with intended text
+- **Babble Tail Removal**: Automatically detects and removes unwanted speech artifacts at the end of audio
+- **Adaptive Margins**: Smart margin calculation prevents cutting off words while removing excess
+- **Performance Optimized**: Uses tiny.en model on CPU for fast inference without affecting GPU TTS performance
+
+The audio trimmer is automatically applied to all server-generated audio and can be configured in `server_config.yaml`.
 
 ## Important Notes
 
-- Streaming implementation achieves ~0.5 RTF (Real-Time Factor) on RTX 4090
 - Context window and chunk size parameters control latency vs quality tradeoffs
 - Models load from HuggingFace hub automatically via `from_pretrained()`
 - Device support: CUDA (preferred), MPS (macOS), CPU (fallback)
+- The server provides production-ready TTS with emotion support and automatic audio optimization
