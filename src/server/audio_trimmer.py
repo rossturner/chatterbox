@@ -170,6 +170,40 @@ class AudioTrimmer:
         
         return False
     
+    def _ends_with_intended_text(self, recognized_transcript: str, intended_text: str) -> bool:
+        """
+        Check if the recognized transcript ends with the intended text (allowing for minor variations).
+        
+        Args:
+            recognized_transcript: The full transcript from Whisper
+            intended_text: The original intended text
+            
+        Returns:
+            True if the recognized text ends with the intended text, False otherwise
+        """
+        if not recognized_transcript or not intended_text:
+            return False
+        
+        # Normalize both texts for comparison
+        rec_tokens = self._normalize_tokens(recognized_transcript)
+        intended_tokens = self._normalize_tokens(intended_text)
+        
+        if not rec_tokens or not intended_tokens:
+            return False
+        
+        # Check if the recognized text ends with the intended text
+        if len(rec_tokens) < len(intended_tokens):
+            return False
+        
+        # Extract the ending portion of recognized text that matches intended length
+        rec_ending = rec_tokens[-len(intended_tokens):]
+        
+        # Calculate similarity between the ending and intended text
+        similarity = self._calculate_similarity(rec_ending, intended_tokens)
+        
+        # Use a high threshold (0.9) to ensure we only skip trimming when very confident
+        return similarity >= 0.9
+    
     def _find_best_sequence_match(self, rec_tokens: list[str], rec_ends: list[float], 
                                 target_tokens: list[str]) -> Optional[float]:
         """
@@ -448,6 +482,43 @@ class AudioTrimmer:
             # Combine transcript parts
             recognized_transcript = " ".join(recognized_transcript_parts).strip()
             
+            # Check if the recognized transcript ends with the intended text
+            # If it does, skip trimming and return the original audio
+            if self._ends_with_intended_text(recognized_transcript, intended_text):
+                logger.debug(f"Audio ends correctly with intended text, skipping trim. Recognized: '{recognized_transcript}', Intended: '{intended_text}'")
+                
+                # Update statistics for this non-trim
+                self.total_trims += 1
+                self.total_trim_time += time.time() - transcribe_start
+                self.total_transcribe_time += transcribe_time
+                
+                # Return original audio with metrics
+                metrics = {
+                    'original_duration': original_duration,
+                    'trimmed_duration': original_duration,
+                    'amount_trimmed': 0.0,
+                    'trim_time': time.time() - transcribe_start,
+                    'transcribe_time': transcribe_time,
+                    'recognized_words': len(recognized_words),
+                    'end_time_found': True,
+                    'recognized_transcript': recognized_transcript,
+                    'intended_text': intended_text,
+                    'adaptive_margin_used': adaptive_margin,
+                    'initial_end_time': None,
+                    'final_end_time': None,
+                    'margin_applied_ms': 0,
+                    'cut_at_seconds': 0,
+                    'fade_start_seconds': 0,
+                    'trimming_skipped': True,
+                    'skip_reason': 'ends_with_intended_text'
+                }
+                
+                # Restore original tensor format if needed
+                if len(original_shape) > 1:
+                    audio_1d = audio_1d.unsqueeze(0)
+                
+                return audio_1d if len(original_shape) == 1 else audio_1d.unsqueeze(0), time.time() - transcribe_start, metrics
+            
             # Find the end time for trimming with two-pass verification
             initial_end_time = self._find_end_time(recognized_words, intended_text, adaptive_margin)
             
@@ -547,14 +618,21 @@ class AudioTrimmer:
                 'final_end_time': end_time,
                 'margin_applied_ms': (cut_at - end_time_original) * 1000 if end_time is not None else 0,
                 'cut_at_seconds': cut_at if end_time is not None else 0,
-                'fade_start_seconds': fade_start if end_time is not None else 0
+                'fade_start_seconds': fade_start if end_time is not None else 0,
+                'trimming_skipped': False,
+                'skip_reason': None
             }
             
             # Enhanced logging with more detailed information
-            logger.debug(
-                f"Audio trimmed: {original_duration:.2f}s -> {trimmed_duration:.2f}s "
-                f"(removed {amount_trimmed:.2f}s) in {total_alignment_time:.3f}s"
-            )
+            if amount_trimmed > 0:
+                logger.debug(
+                    f"Audio trimmed: {original_duration:.2f}s -> {trimmed_duration:.2f}s "
+                    f"(removed {amount_trimmed:.2f}s) in {total_alignment_time:.3f}s"
+                )
+            else:
+                logger.debug(
+                    f"Audio processed: {original_duration:.2f}s (no trimming needed) in {total_alignment_time:.3f}s"
+                )
             
             if end_time is not None:
                 margin_applied = (cut_at - end_time_original) * 1000
@@ -564,7 +642,7 @@ class AudioTrimmer:
                 )
                 
                 # Log potential issues
-                if amount_trimmed < 0.1:
+                if amount_trimmed < 0.1 and amount_trimmed > 0:
                     logger.debug("Very little audio trimmed - may indicate babble detection issues")
                 elif amount_trimmed > original_duration * 0.5:
                     logger.warning(f"Trimmed over 50% of audio ({amount_trimmed:.2f}s) - check alignment accuracy")
@@ -593,7 +671,9 @@ class AudioTrimmer:
                 'final_end_time': None,
                 'margin_applied_ms': 0,
                 'cut_at_seconds': 0,
-                'fade_start_seconds': 0
+                'fade_start_seconds': 0,
+                'trimming_skipped': False,
+                'skip_reason': None
             }
             return audio_tensor, total_time_elapsed, metrics
     
