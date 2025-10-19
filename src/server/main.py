@@ -26,7 +26,11 @@ from .models import (
     EmotionTestRequest,
     EmotionListResponse,
     VoiceSample,
-    WebSocketRequest
+    WebSocketRequest,
+    GenerateRequestV2,
+    GenerateResponseV2,
+    HealthResponseV2,
+    SUPPORTED_LANGUAGES
 )
 from .lock_manager import GenerationLock
 from .tts_manager import TTSManager
@@ -63,40 +67,39 @@ last_request_time: Optional[datetime] = None
 async def startup_event():
     """Initialize server on startup"""
     global config, emotions_config, tts_manager, emotion_manager, websocket_manager
-    
-    logger.info("Starting Chatterbox TTS Server...")
-    
+
+    logger.info("Starting Chatterbox Multilingual TTS Server...")
+
     try:
         # Load configurations
         config_path = Path("configs/server_config.yaml")
-        emotions_path = Path("configs/emotions.yaml")
-        
+
         if not config_path.exists():
             raise FileNotFoundError(f"Server config not found: {config_path}")
-        if not emotions_path.exists():
-            raise FileNotFoundError(f"Emotions config not found: {emotions_path}")
-        
+
         # Load and validate config
         config = Config.from_yaml(config_path)
         config.validate()
         logger.info(f"Loaded server config: {config.model.type} model on {config.model.device}")
-        
-        # Load emotions config
-        emotions_config = load_emotions_config(emotions_path)
-        logger.info(f"Loaded {len(emotions_config)} emotions: {list(emotions_config.keys())}")
-        
-        # Initialize TTS manager
+
+        # Initialize TTS manager for multilingual model
         tts_manager = TTSManager(config)
-        tts_manager.initialize(emotions_config)
-        
-        # Initialize emotion manager
-        emotion_manager = EmotionManager(config.server, tts_manager.conditionals_manager)
-        
-        # Initialize WebSocket connection manager
-        websocket_manager = WebSocketConnectionManager(tts_manager, emotion_manager, generation_lock)
-        
-        logger.info("Server initialization complete!")
-        
+        tts_manager.initialize()
+
+        # For backwards compatibility with old API, try to load emotions if available
+        emotions_path = Path("configs/emotions.yaml")
+        if emotions_path.exists():
+            emotions_config = load_emotions_config(emotions_path)
+            emotion_manager = EmotionManager(config.server, None)  # No conditionals_manager
+            websocket_manager = WebSocketConnectionManager(tts_manager, emotion_manager, generation_lock)
+            logger.info(f"Loaded {len(emotions_config)} emotions for legacy API")
+        else:
+            emotion_manager = None
+            websocket_manager = None
+            logger.info("Emotions config not found - legacy API disabled")
+
+        logger.info(f"Server initialization complete! Multilingual support for {len(SUPPORTED_LANGUAGES)} languages")
+
     except Exception as e:
         logger.error(f"Failed to initialize server: {e}")
         raise
@@ -134,12 +137,99 @@ async def health_check():
     )
 
 
+@app.get("/v2/health", response_model=HealthResponseV2)
+async def health_check_v2():
+    """Health check endpoint for V2 API"""
+    return HealthResponseV2(
+        status="healthy",
+        model="multilingual",
+        model_path=config.model.path if config else None,
+        supported_languages=list(SUPPORTED_LANGUAGES.keys()),
+        processing=generation_lock.is_busy,
+        requests_processed=tts_manager.total_requests if tts_manager else 0,
+        cache_enabled=True
+    )
+
+
+@app.post("/v2/generate", response_model=GenerateResponseV2)
+def generate_speech_v2(request: GenerateRequestV2):
+    """Generate speech using zero-shot voice cloning (V2 API)"""
+    global last_request_time
+
+    if not tts_manager:
+        raise HTTPException(status_code=503, detail="Server not initialized")
+
+    # Try to acquire lock
+    request_info = {
+        "language": request.language,
+        "text_length": len(request.text),
+        "start_time": datetime.utcnow().isoformat()
+    }
+
+    acquired, queue_time = generation_lock.acquire_for_generation(
+        timeout=config.server.busy_timeout,
+        request_info=request_info
+    )
+
+    if not acquired:
+        raise HTTPException(
+            status_code=503,
+            detail="Server busy processing another request. Please try again."
+        )
+
+    try:
+        # Normalize text
+        text_normalized = normalize_text(request.text)
+
+        # Generate audio
+        audio_tensor, duration, generation_time, language_used, cache_hit = tts_manager.generate(
+            text=text_normalized,
+            language=request.language,
+            reference_audio_base64=request.reference_audio_base64,
+            temperature=request.temperature,
+            cfg_weight=request.cfg_weight,
+            exaggeration=request.exaggeration,
+            min_p=request.min_p
+        )
+
+        # Convert to base64
+        audio_base64 = tts_manager.audio_to_base64(audio_tensor)
+
+        # Calculate RTF
+        rtf = generation_time / duration if duration > 0 else 0
+
+        # Update last request time
+        last_request_time = datetime.utcnow()
+
+        return GenerateResponseV2(
+            audio=audio_base64,
+            duration=duration,
+            rtf=rtf,
+            generation_time=generation_time,
+            queue_time=queue_time,
+            language_used=language_used,
+            text_normalized=text_normalized,
+            cache_hit=cache_hit
+        )
+
+    except ValueError as e:
+        # Validation errors (e.g., unsupported language, invalid audio)
+        logger.error(f"Validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        generation_lock.release()
+
+
 @app.get("/emotions", response_model=EmotionsResponse)
 async def list_emotions():
     """List available emotions"""
     if not emotion_manager:
         raise HTTPException(status_code=503, detail="Server not initialized")
-    
+
     emotions = emotion_manager.list_emotions()
     return EmotionsResponse(emotions=list(emotions.keys()))
 

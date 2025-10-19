@@ -10,75 +10,47 @@ import torchaudio
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from src.chatterbox.tts import ChatterboxTTS
+from src.chatterbox.mtl_tts import ChatterboxMultilingualTTS, SUPPORTED_LANGUAGES
 from src.chatterbox.models.s3gen import S3GEN_SR
 from .config import Config
-from .conditionals_manager import ConditionalsManager
+from .conditional_cache import ConditionalCache
 from .optimized_model_loader import OptimizedModelLoader
-from .audio_trimmer import AudioTrimmer
+from .inference_thread import InferenceThread
 
 logger = logging.getLogger(__name__)
 
 
 class TTSManager:
-    """Manager for TTS model and generation"""
-    
+    """Manager for multilingual TTS model and zero-shot voice cloning"""
+
     def __init__(self, config: Config):
         self.config = config
-        self.model: Optional[ChatterboxTTS] = None
-        self.conditionals_manager = ConditionalsManager(Path(config.caching.conditionals_dir))
+        self.model: Optional[ChatterboxMultilingualTTS] = None
+        self.conditional_cache = ConditionalCache()
         self.device = config.model.device
         self.sample_rate = S3GEN_SR
-        
-        # Initialize audio trimmer if enabled
-        self.audio_trimmer: Optional[AudioTrimmer] = None
-        self.enable_audio_trimming = getattr(config.model, 'enable_audio_trimming', True)
-        
-        if self.enable_audio_trimming:
-            self.audio_trimmer = AudioTrimmer(model_size="tiny.en", device="cpu")
-            logger.info("Audio trimmer initialized (Faster-Whisper tiny.en on CPU)")
-        else:
-            logger.info("Audio trimming disabled in configuration")
-        
+
         # Metrics tracking
         self.loaded_at = None
         self.total_requests = 0
         self.total_generation_time = 0.0
         self.total_rtf = 0.0
-        
+
         # Optimization info
         self.optimization_info = {}
+
+        # Inference thread for CUDA graph thread affinity
+        self.inference_thread = InferenceThread()
         
-    def initialize(self, emotions_config: dict) -> None:
-        """Initialize TTS model and prepare conditionals"""
-        logger.info("Initializing TTS Manager...")
-        
+    def initialize(self) -> None:
+        """Initialize multilingual TTS model"""
+        logger.info("Initializing Multilingual TTS Manager...")
+
         # Load the model
         self._load_model()
-        
-        # Prepare and cache conditionals
-        if self.config.caching.precompute_on_startup:
-            logger.info("Pre-computing conditionals for all emotions...")
-            prepared, loaded = self.conditionals_manager.prepare_conditionals(
-                self.model,
-                emotions_config,
-                batch_size=self.config.caching.batch_size
-            )
-            logger.info(f"Conditionals ready: {prepared} prepared, {loaded} loaded from cache")
-        else:
-            logger.info("Loading existing conditionals from cache...")
-            self.conditionals_manager.load_all_to_ram()
-        
-        # Warm up audio trimmer if enabled
-        if self.enable_audio_trimming and self.audio_trimmer:
-            try:
-                warmup_time = self.audio_trimmer.warmup()
-                logger.info(f"Audio trimmer warmed up successfully in {warmup_time:.2f}s")
-            except Exception as e:
-                logger.warning(f"Audio trimmer warmup failed (non-fatal): {e}")
-        
+
         self.loaded_at = datetime.utcnow()
-        logger.info("TTS Manager initialized successfully")
+        logger.info(f"Multilingual TTS Manager initialized successfully with {len(SUPPORTED_LANGUAGES)} languages")
     
     def _load_model(self) -> None:
         """Load and optimize the TTS model based on configuration"""
@@ -108,7 +80,10 @@ class TTSManager:
                 # Perform warmup compilation if torch.compile was applied
                 if self.optimization_info.get('torch_compile'):
                     logger.info("Performing warmup to trigger torch.compile compilation...")
-                    
+
+                    # Start inference thread for CUDA graph thread affinity
+                    self.inference_thread.start()
+
                     # Try to find an audio file for warmup
                     warmup_audio = None
                     import glob
@@ -118,21 +93,24 @@ class TTSManager:
                         "audio_data/*.wav",
                         "audio_data_v2/*.wav"
                     ]
-                    
+
                     for pattern in search_patterns:
                         audio_files = glob.glob(pattern, recursive=True)
                         if audio_files:
                             warmup_audio = audio_files[0]
                             break
-                    
+
                     if warmup_audio:
-                        compilation_time = loader.warmup_model(
+                        # Execute warmup in inference thread to compile CUDA graphs in that thread context
+                        compilation_time = self.inference_thread.execute(
+                            loader.warmup_model,
                             self.model,
                             warmup_text="This is a warmup run to trigger model compilation.",
-                            warmup_audio_path=warmup_audio
+                            warmup_audio_path=warmup_audio,
+                            task_id="model_warmup"
                         )
                         self.optimization_info['compilation_time'] = compilation_time
-                        logger.info(f"Model compilation complete! Ready for fast inference.")
+                        logger.info(f"Model compilation complete in inference thread (TID: {self.inference_thread.thread_id})!")
                     else:
                         logger.warning("No audio files found for warmup. Model may not be fully optimized.")
                 
@@ -148,23 +126,23 @@ class TTSManager:
             start_time = time.time()
             
             try:
-                if model_type == "base":
-                    # Load from HuggingFace
-                    self.model = ChatterboxTTS.from_pretrained(self.device)
-                    logger.info("Loaded base model from HuggingFace")
-                    
+                if model_type == "multilingual" or model_type == "base":
+                    # Load multilingual model from HuggingFace
+                    self.model = ChatterboxMultilingualTTS.from_pretrained(self.device)
+                    logger.info("Loaded multilingual model from HuggingFace")
+
                 elif model_type in ["grpo", "quantized"]:
                     # Load from local path
                     if not model_path:
                         raise ValueError(f"Model path required for {model_type} model")
-                    
+
                     model_path = Path(model_path)
                     if not model_path.exists():
                         raise FileNotFoundError(f"Model not found: {model_path}")
-                    
-                    self.model = ChatterboxTTS.from_local(model_path, self.device)
-                    logger.info(f"Loaded {model_type} model from {model_path}")
-                    
+
+                    self.model = ChatterboxMultilingualTTS.from_local(model_path, self.device)
+                    logger.info(f"Loaded {model_type} multilingual model from {model_path}")
+
                 else:
                     raise ValueError(f"Unknown model type: {model_type}")
                 
@@ -189,107 +167,103 @@ class TTSManager:
     def generate(
         self,
         text: str,
-        emotion: str,
+        language: str,
+        reference_audio_base64: str,
         temperature: float = 0.8,
-        cfg_weight: float = 0.5,
-        exaggeration: Optional[float] = None
-    ) -> Tuple[torch.Tensor, float, float, str, str, Optional[dict]]:
+        cfg_weight: float = 0.3,
+        exaggeration: float = 0.5,
+        min_p: float = 0.1
+    ) -> Tuple[torch.Tensor, float, float, str, bool]:
         """
-        Generate speech for text with specified emotion.
-        
+        Generate speech using zero-shot voice cloning.
+
         Args:
             text: Text to synthesize
-            emotion: Emotion to use
+            language: Language code (e.g., 'en', 'ja', 'ko')
+            reference_audio_base64: Base64-encoded reference audio
             temperature: Sampling temperature
             cfg_weight: CFG weight
-            exaggeration: Optional exaggeration override
-            
+            exaggeration: Voice exaggeration factor
+
         Returns:
-            Tuple of (audio_tensor, duration, generation_time, emotion_used, voice_sample_used, trim_metrics)
+            Tuple of (audio_tensor, duration, generation_time, language_used, cache_hit)
         """
         if not self.model:
             raise RuntimeError("Model not initialized")
-        
-        # Get random conditionals from RAM
-        conditionals_cpu, voice_sample_used = self.conditionals_manager.get_random_conditionals(emotion)
-        
-        # Transfer to GPU (fast, ~0.11 MB)
-        conditionals_gpu = conditionals_cpu.to(device=self.device)
-        
-        # Get emotion config for default exaggeration if not specified
-        if exaggeration is None:
-            emotion_config = self.conditionals_manager.get_emotion_config(emotion)
-            if emotion_config:
-                if hasattr(emotion_config, 'exaggeration'):
-                    exaggeration = emotion_config.exaggeration
-                else:
-                    exaggeration = emotion_config.get('exaggeration', 0.5)
-            else:
-                exaggeration = 0.5
-        
-        # Update exaggeration in conditionals if different
-        if hasattr(conditionals_gpu.t3, 'emotion_adv'):
-            current_exag = conditionals_gpu.t3.emotion_adv[0, 0, 0].item()
-            if abs(current_exag - exaggeration) > 0.01:  # Only update if significantly different
-                from src.chatterbox.models.t3.modules.cond_enc import T3Cond
-                conditionals_gpu.t3 = T3Cond(
-                    speaker_emb=conditionals_gpu.t3.speaker_emb,
-                    cond_prompt_speech_tokens=conditionals_gpu.t3.cond_prompt_speech_tokens,
-                    emotion_adv=exaggeration * torch.ones(1, 1, 1),
-                ).to(device=self.device)
-        
+
+        # Validate language
+        language = language.lower().strip()
+        if language not in SUPPORTED_LANGUAGES:
+            supported = ", ".join(SUPPORTED_LANGUAGES.keys())
+            raise ValueError(f"Unsupported language '{language}'. Supported: {supported}")
+
+        # Check cache first
+        cache_hit = False
+        cached_audio_path = self.conditional_cache.get(reference_audio_base64)
+
+        if cached_audio_path is not None:
+            # Cache hit - use cached audio file path
+            cache_hit = True
+            audio_file_path = cached_audio_path
+            logger.info(f"Cache hit - using cached reference audio file")
+        else:
+            # Cache miss - decode audio and save to temp file
+            cache_hit = False
+            logger.info(f"Cache miss - decoding and caching reference audio")
+
+            # Decode base64 audio
+            import io
+            import tempfile
+            audio_bytes = base64.b64decode(reference_audio_base64)
+
+            # Save to temporary WAV file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav", mode='wb')
+            temp_file.write(audio_bytes)
+            temp_file.close()
+            audio_file_path = temp_file.name
+
+            # Store path in cache
+            self.conditional_cache.set(reference_audio_base64, audio_file_path)
+            logger.debug(f"Reference audio cached at {audio_file_path}")
+
         try:
-            # Set pre-computed conditionals
-            self.model.conds = conditionals_gpu
-            
-            # Generate audio
+            # Generate audio in inference thread for CUDA graph thread affinity
             start_time = time.time()
-            audio_tensor = self.model.generate(
+
+            # Execute model.generate() in the dedicated inference thread
+            audio_tensor = self.inference_thread.execute(
+                self.model.generate,
                 text=text,
+                language_id=language,
+                audio_prompt_path=audio_file_path,
+                exaggeration=exaggeration,
                 temperature=temperature,
-                cfg_weight=cfg_weight
+                cfg_weight=cfg_weight,
+                min_p=min_p,
+                task_id=f"generate_{language}_{len(text)}"
             )
+
             generation_time = time.time() - start_time
-            
-            # Calculate original duration
-            original_duration = len(audio_tensor.squeeze()) / self.sample_rate
-            
-            # Apply audio trimming if enabled
-            trim_metrics = None
-            if self.enable_audio_trimming and self.audio_trimmer:
-                try:
-                    audio_tensor, alignment_time, trim_metrics = self.audio_trimmer.trim_audio(
-                        audio_tensor, self.sample_rate, text
-                    )
-                    logger.debug(f"Audio trimming completed in {alignment_time:.3f}s")
-                except Exception as e:
-                    logger.warning(f"Audio trimming failed, using original audio: {e}")
-                    trim_metrics = {'error': str(e), 'alignment_time': 0.0}
-            
-            # Calculate final duration (after trimming)
-            final_duration = len(audio_tensor.squeeze()) / self.sample_rate
-            
+
+            # Calculate duration
+            duration = len(audio_tensor.squeeze()) / self.sample_rate
+
             # Update metrics
             self.total_requests += 1
             self.total_generation_time += generation_time
-            rtf = generation_time / final_duration if final_duration > 0 else 0
+            rtf = generation_time / duration if duration > 0 else 0
             self.total_rtf += rtf
-            
+
             # Log generation results
-            if trim_metrics and trim_metrics.get('amount_trimmed', 0) > 0:
-                logger.info(f"Generated {final_duration:.2f}s audio (trimmed from {original_duration:.2f}s, "
-                           f"removed {trim_metrics['amount_trimmed']:.2f}s) in {generation_time:.2f}s "
-                           f"(RTF: {rtf:.3f}) using {voice_sample_used}")
-            else:
-                logger.info(f"Generated {final_duration:.2f}s audio in {generation_time:.2f}s "
-                           f"(RTF: {rtf:.3f}) using {voice_sample_used}")
-            
-            return audio_tensor, final_duration, generation_time, emotion, voice_sample_used, trim_metrics
-            
+            logger.info(f"Generated {duration:.2f}s audio in {generation_time:.2f}s "
+                       f"(RTF: {rtf:.3f}) for language '{language}' "
+                       f"(cache_hit={cache_hit})")
+
+            return audio_tensor, duration, generation_time, language, cache_hit
+
         finally:
             # Clean up GPU memory if configured
             if not self.config.model.keep_warm:
-                del conditionals_gpu
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
     
@@ -586,13 +560,10 @@ class TTSManager:
         if self.model:
             del self.model
             self.model = None
-        
-        if self.audio_trimmer:
-            self.audio_trimmer.cleanup()
-        
-        self.conditionals_manager.clear_cache()
-        
+
+        self.conditional_cache.clear()
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        
+
         logger.info("TTS Manager cleaned up")

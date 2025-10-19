@@ -6,39 +6,22 @@ server:
   busy_timeout: 1.0  # seconds to wait for lock
   
 model:
-  type: "base"  # "base", "grpo", or "quantized"
+  type: "multilingual"  # Use multilingual model for zero-shot voice cloning
   path: null  # Use HuggingFace default model
   device: "cuda"
   keep_warm: true  # Keep model warm between requests
   use_optimizations: true  # Enable torch.compile and other optimizations
-  
+
 generation:
   default_temperature: 0.8
   default_cfg_weight: 0.5
   max_text_length: 1000
   use_cuda_graphs: true
-  
-caching:
-  precompute_on_startup: true
-  save_conditionals: true  # Save to disk for faster restarts
-  conditionals_dir: "./conditionals_cache"
-  batch_size: 5  # Number of conditionals to prepare at once
-  
-streaming:
-  enabled: false  # Disabled for simpler single-request mode
-  default_chunk_size: 25
-  default_context_window: 50
-  fade_duration: 0.02
 
-websocket:
-  enabled: true  # Enable WebSocket streaming
-  max_connections: 10  # Maximum concurrent WebSocket connections
-  connection_timeout: 30  # Timeout for WebSocket connections in seconds
-  max_request_size: 1000  # Maximum text length for WebSocket requests
-  include_progress: true  # Send progress updates by default
-  sentence_streaming: true  # Use sentence-based streaming instead of token streaming
-  
+cache:
+  enabled: true  # Enable single-slot conditional caching
+
 performance:
   pin_memory: true  # Use pinned memory for transfers
-  torch_compile: true  # Disable for now to avoid complexity
+  torch_compile: true  # Enable torch.compile for faster inference
   single_request_mode: true  # Optimize for single request processing

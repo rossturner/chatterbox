@@ -1,0 +1,36 @@
+services:
+  chatterbox-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chatterbox-tts:latest
+    container_name: chatterbox-tts
+    ports:
+      - "8091:8000"
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+      - temp-audio:/tmp
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - PYTHONUNBUFFERED=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+
+volumes:
+  huggingface-cache:
+    name: chatterbox-huggingface-cache
+  temp-audio:
+    name: chatterbox-temp-audio

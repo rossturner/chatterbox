@@ -130,12 +130,12 @@ class Config:
             self.server.workers = 1
         
         # Validate model type
-        valid_types = ["base", "grpo", "quantized"]
+        valid_types = ["base", "multilingual", "grpo", "quantized"]
         if self.model.type not in valid_types:
             raise ValueError(f"Invalid model type: {self.model.type}. Must be one of {valid_types}")
-        
+
         # Check if local model path exists
-        if self.model.type != "base" and self.model.path:
+        if self.model.type not in ["base", "multilingual"] and self.model.path:
             model_path = Path(self.model.path)
             if not model_path.exists():
                 raise ValueError(f"Model path does not exist: {self.model.path}")

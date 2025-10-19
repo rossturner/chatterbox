@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Union
 from enum import Enum
+from chatterbox import SUPPORTED_LANGUAGES
 
 
 class GenerateRequest(BaseModel):
@@ -20,6 +21,32 @@ class GenerateRequest(BaseModel):
         return v
 
 
+class GenerateRequestV2(BaseModel):
+    """Request model for zero-shot voice cloning API"""
+    text: str = Field(..., description="Text to synthesize", min_length=1, max_length=500)
+    language: str = Field(..., description="Language code (e.g., 'en', 'ja', 'ko')")
+    reference_audio_base64: str = Field(..., description="Base64 encoded reference audio (WAV format)")
+    temperature: Optional[float] = Field(0.8, ge=0.05, le=5.0, description="Sampling temperature")
+    cfg_weight: Optional[float] = Field(0.3, ge=0.0, le=1.0, description="CFG weight/pace")
+    exaggeration: Optional[float] = Field(0.5, ge=0.1, le=2.0, description="Voice exaggeration factor")
+    min_p: Optional[float] = Field(0.1, ge=0.0, le=1.0, description="Minimum probability threshold")
+
+    @validator('text')
+    def validate_text(cls, v):
+        v = ' '.join(v.split())
+        if len(v) == 0:
+            raise ValueError("Text cannot be empty after normalization")
+        return v
+
+    @validator('language')
+    def validate_language(cls, v):
+        v = v.lower().strip()
+        if v not in SUPPORTED_LANGUAGES:
+            supported = ", ".join(SUPPORTED_LANGUAGES.keys())
+            raise ValueError(f"Unsupported language '{v}'. Supported languages: {supported}")
+        return v
+
+
 class GenerateResponse(BaseModel):
     """Response model for speech generation"""
     audio: str = Field(..., description="Base64 encoded WAV audio")
@@ -29,12 +56,24 @@ class GenerateResponse(BaseModel):
     queue_time: float = Field(..., description="Time spent waiting for lock in seconds")
     emotion_used: str = Field(..., description="Emotion that was used")
     text_normalized: str = Field(..., description="Normalized text that was synthesized")
-    
+
     # Audio trimming metrics
     alignment_time: Optional[float] = Field(None, description="Time spent on audio alignment and trimming in seconds")
     original_duration: Optional[float] = Field(None, description="Original audio duration before trimming in seconds")
     trimmed_amount: Optional[float] = Field(None, description="Amount of audio trimmed off in seconds")
     total_rtf: Optional[float] = Field(None, description="Total RTF including generation and trimming time")
+
+
+class GenerateResponseV2(BaseModel):
+    """Response model for zero-shot voice cloning API"""
+    audio: str = Field(..., description="Base64 encoded WAV audio")
+    duration: float = Field(..., description="Audio duration in seconds")
+    rtf: float = Field(..., description="Real-time factor (generation_time / audio_duration)")
+    generation_time: float = Field(..., description="Time taken to generate audio in seconds")
+    queue_time: float = Field(..., description="Time spent waiting for lock in seconds")
+    language_used: str = Field(..., description="Language code that was used")
+    text_normalized: str = Field(..., description="Normalized text that was synthesized")
+    cache_hit: bool = Field(..., description="Whether conditionals were loaded from cache")
 
 
 class HealthResponse(BaseModel):
@@ -45,6 +84,17 @@ class HealthResponse(BaseModel):
     emotions: List[str] = Field(..., description="Available emotions")
     processing: bool = Field(..., description="Whether currently processing a request")
     requests_processed: int = Field(..., description="Total requests processed")
+
+
+class HealthResponseV2(BaseModel):
+    """Response model for health check (V2 API)"""
+    status: str = Field(..., description="Server status")
+    model: str = Field(..., description="Model type loaded")
+    model_path: Optional[str] = Field(None, description="Model path")
+    supported_languages: List[str] = Field(..., description="Supported language codes")
+    processing: bool = Field(..., description="Whether currently processing a request")
+    requests_processed: int = Field(..., description="Total requests processed")
+    cache_enabled: bool = Field(..., description="Whether conditional caching is enabled")
 
 
 class EmotionsResponse(BaseModel):

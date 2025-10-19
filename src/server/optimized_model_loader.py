@@ -17,7 +17,7 @@ import torch
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 torch.set_float32_matmul_precision('high')
 
-from ..chatterbox.tts import ChatterboxTTS
+from ..chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class OptimizedModelLoader:
     # Optimization settings
     USE_BFLOAT16 = True
     REDUCED_CACHE_LEN = 1200  # Reduced from 4096 for better performance
-    COMPILE_MODE = "max-autotune"  # or "reduce-overhead" for faster compilation
+    COMPILE_MODE = "max-autotune"  # Best performance with CUDA graphs (requires thread affinity)
     
     def __init__(self, device: str = "cuda"):
         """
@@ -60,7 +60,7 @@ class OptimizedModelLoader:
         self, 
         model_type: str, 
         model_path: Optional[Path] = None
-    ) -> Tuple[ChatterboxTTS, dict]:
+    ) -> Tuple[ChatterboxMultilingualTTS, dict]:
         """
         Load a model and apply all optimizations.
         
@@ -98,7 +98,7 @@ class OptimizedModelLoader:
         self, 
         model_type: str, 
         model_path: Optional[Path] = None
-    ) -> ChatterboxTTS:
+    ) -> ChatterboxMultilingualTTS:
         """
         Load the base model without optimizations.
         
@@ -109,28 +109,28 @@ class OptimizedModelLoader:
         Returns:
             Loaded ChatterboxTTS model
         """
-        if model_type == "base":
+        if model_type == "multilingual" or model_type == "base":
             # Load from HuggingFace
-            model = ChatterboxTTS.from_pretrained(self.device)
-            logger.info("  Loaded base model from HuggingFace")
-            
+            model = ChatterboxMultilingualTTS.from_pretrained(self.device)
+            logger.info("  Loaded multilingual model from HuggingFace")
+
         elif model_type in ["grpo", "quantized"]:
             # Load from local path
             if not model_path:
                 raise ValueError(f"Model path required for {model_type} model")
-            
+
             if not model_path.exists():
                 raise FileNotFoundError(f"Model not found: {model_path}")
-            
-            model = ChatterboxTTS.from_local(model_path, self.device)
-            logger.info(f"  Loaded {model_type} model from {model_path}")
+
+            model = ChatterboxMultilingualTTS.from_local(model_path, self.device)
+            logger.info(f"  Loaded {model_type} multilingual model from {model_path}")
             
         else:
             raise ValueError(f"Unknown model type: {model_type}")
         
         return model
     
-    def _apply_optimizations(self, model: ChatterboxTTS) -> dict:
+    def _apply_optimizations(self, model: ChatterboxMultilingualTTS) -> dict:
         """
         Apply all performance optimizations to the model.
         
@@ -194,7 +194,7 @@ class OptimizedModelLoader:
     
     def warmup_model(
         self, 
-        model: ChatterboxTTS, 
+        model: ChatterboxMultilingualTTS, 
         warmup_text: str = "Hello, this is a warmup run to trigger compilation.",
         warmup_audio_path: Optional[str] = None
     ) -> float:
@@ -239,10 +239,20 @@ class OptimizedModelLoader:
         start = time.perf_counter()
         try:
             if warmup_audio_path:
-                _ = model.generate(warmup_text, warmup_audio_path, temperature=0.5, cfg_weight=0.5)
+                _ = model.generate(
+                    text=warmup_text,
+                    language_id='en',
+                    audio_prompt_path=warmup_audio_path,
+                    temperature=0.5,
+                    cfg_weight=0.5
+                )
             else:
-                # Try without audio path (may fail if model needs conditionals)
-                _ = model.generate(warmup_text, temperature=0.5, cfg_weight=0.5)
+                _ = model.generate(
+                    text=warmup_text,
+                    language_id='en',
+                    temperature=0.5,
+                    cfg_weight=0.5
+                )
         except Exception as e:
             logger.warning(f"    Warmup 1 failed (may be expected): {e}")
             return 0.0
@@ -254,9 +264,20 @@ class OptimizedModelLoader:
         start = time.perf_counter()
         try:
             if warmup_audio_path:
-                _ = model.generate(warmup_text, warmup_audio_path, temperature=0.5, cfg_weight=0.5)
+                _ = model.generate(
+                    text=warmup_text,
+                    language_id='en',
+                    audio_prompt_path=warmup_audio_path,
+                    temperature=0.5,
+                    cfg_weight=0.5
+                )
             else:
-                _ = model.generate(warmup_text, temperature=0.5, cfg_weight=0.5)
+                _ = model.generate(
+                    text=warmup_text,
+                    language_id='en',
+                    temperature=0.5,
+                    cfg_weight=0.5
+                )
         except Exception as e:
             logger.warning(f"    Warmup 2 failed: {e}")
             return warmup1_time
@@ -310,9 +331,9 @@ def load_optimized_model(
     device: str = "cuda",
     perform_warmup: bool = True,
     warmup_audio_path: Optional[str] = None
-) -> Tuple[ChatterboxTTS, dict]:
+) -> Tuple[ChatterboxMultilingualTTS, dict]:
     """
-    Convenience function to load and optimize a model in one step.
+    Convenience function to load and optimize a multilingual model in one step.
     
     Args:
         model_type: Type of model (base/grpo/quantized)

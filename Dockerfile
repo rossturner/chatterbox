@@ -46,26 +46,24 @@ RUN pip install --no-cache-dir \
     "websockets>=11.0.0" \
     "requests>=2.30.0" \
     "tabulate>=0.9.0" \
-    "python-multipart"
+    "python-multipart" \
+    "resemble-perth" \
+    "spacy-pkuseg" \
+    "pykakasi" \
+    "gradio"
 
 # Copy source code
 COPY src/ /app/src/
 
-# Copy models
-COPY models/nicole_v2/lora_v2_2/ /app/models/nicole_v2/lora_v2_2/
-
 # Copy configs
 COPY configs/ /app/configs/
-
-# Copy conditionals cache
-COPY conditionals_cache/ /app/conditionals_cache/
 
 # Expose port 8000
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+    CMD curl -f http://localhost:8000/v2/health || exit 1
 
 # Set the default command directly
 CMD ["python", "-m", "src.server.main"]
