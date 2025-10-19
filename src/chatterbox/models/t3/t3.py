@@ -3,12 +3,14 @@
 import logging
 from typing import Union, Optional, List
 
+logger = logging.getLogger(__name__)
+
 from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 from transformers import LlamaModel, LlamaConfig
-from transformers.generation.logits_process import TopPLogitsWarper, RepetitionPenaltyLogitsProcessor
+from transformers.generation.logits_process import TopPLogitsWarper, RepetitionPenaltyLogitsProcessor, MinPLogitsWarper
 from transformers.cache_utils import StaticCache
 
 from .modules.learned_pos_emb import LearnedPositionEmbeddings
@@ -18,15 +20,10 @@ from .modules.t3_config import T3Config
 from .llama_configs import LLAMA_CONFIGS
 from .inference.t3_hf_backend import T3HuggingfaceBackend
 from .inference.alignment_stream_analyzer import AlignmentStreamAnalyzer
+from ..utils import AttrDict
 
 
 logger = logging.getLogger(__name__)
-
-
-class AttrDict(dict):
-    def __init__(self, *args, **kwargs):
-        super(AttrDict, self).__init__(*args, **kwargs)
-        self.__dict__ = self
 
 
 def _ensure_BOT_EOT(text_tokens: Tensor, hp):
@@ -45,7 +42,9 @@ class T3(nn.Module):
             different PE embedding space for speech.
     """
 
-    def __init__(self, hp=T3Config()):
+    def __init__(self, hp=None):
+        if hp is None:
+            hp = T3Config.english_only()  # Default to English-only config for backward compatibility
         super().__init__()
         self.hp = hp
         self.cfg = LlamaConfig(**LLAMA_CONFIGS[hp.llama_config_name])
@@ -176,11 +175,12 @@ class T3(nn.Module):
         t3_cond: T3Cond,
         text_tokens: torch.LongTensor,
         speech_tokens: torch.LongTensor,
+        cfg_weight: float = 0.0,
     ):
         # prepare input embeddings (skip backbone tranformer embeddings)
         cond_emb = self.prepare_conditioning(t3_cond)  # (B, len_cond, dim)
         text_emb = self.text_emb(text_tokens)  # (B, len_text, dim)
-        if text_emb.size(0) > 1:  # Only zero out if we have CFG (batch size > 1)
+        if cfg_weight > 0.0:
             text_emb[1].zero_()  # CFG uncond
 
         speech_emb = self.speech_emb(speech_tokens)  # (B, len_speech, dim)
@@ -310,10 +310,11 @@ class T3(nn.Module):
         stop_on_eos=True,
         do_sample=True,
         temperature=0.8,
-        top_p=0.8,
+        top_p=0.95,
+        min_p=0.05,
         length_penalty=1.0,
-        repetition_penalty=2.0,
-        cfg_weight=0,
+        repetition_penalty=1.2,
+        cfg_weight=0.5,
     ):
         """
         Args:
@@ -337,11 +338,23 @@ class T3(nn.Module):
             t3_cond=t3_cond,
             text_tokens=text_tokens,
             speech_tokens=initial_speech_tokens,
+            cfg_weight=cfg_weight,
         )
 
         # Set up patched model if not already compiled
         if not self.compiled:
-            # Disable AlignmentStreamAnalyzer to enable optimized attention
+            # Disable AlignmentStreamAnalyzer for streaming optimization
+            # Note: This is disabled even for multilingual models to maintain streaming performance
+            # If multilingual alignment is needed, uncomment the code below:
+            # alignment_stream_analyzer = None
+            # if self.hp.is_multilingual:
+            #     alignment_stream_analyzer = AlignmentStreamAnalyzer(
+            #         self.tfmr,
+            #         None,
+            #         text_tokens_slice=(len_cond, len_cond + text_tokens.size(-1)),
+            #         alignment_layer_idx=9,
+            #         eos_idx=self.hp.stop_speech_token,
+            #     )
             patched_model = T3HuggingfaceBackend(
                 config=self.cfg,
                 llama=self.tfmr,
@@ -351,11 +364,11 @@ class T3(nn.Module):
             )
             self.patched_model = patched_model
             self.compiled = True
-        
-        # Pre-compute embedding caches for the generation loop
+
+        # Pre-compute embedding caches for the generation loop (streaming optimization)
         self.get_speech_pos_embedding_cache(max_new_tokens + 1 or self.hp.max_speech_tokens, dtype=embeds.dtype)
         self.init_speech_embedding_cache(vocab_size=self.hp.speech_tokens_dict_size, dtype=embeds.dtype)
-        
+
         device = embeds.device
         effective_batch_size = 2 if cfg_weight > 0 else 1  # CFG uses batch size 2
         
@@ -406,7 +419,9 @@ class T3(nn.Module):
 
         # Instantiate the logits processors.
         top_p_warper = TopPLogitsWarper(top_p=top_p)
-        repetition_penalty_processor = RepetitionPenaltyLogitsProcessor(penalty=repetition_penalty)
+        min_p_warper = MinPLogitsWarper(min_p=min_p)
+        top_p_warper = TopPLogitsWarper(top_p=top_p)
+        repetition_penalty_processor = RepetitionPenaltyLogitsProcessor(penalty=float(repetition_penalty))
 
         # ---- Initial Forward Pass with StaticCache ----
         output_logits = self.patched_model(
@@ -417,23 +432,35 @@ class T3(nn.Module):
 
         # ---- Generation Loop using kv_cache ----
         for i in tqdm(range(max_new_tokens), desc="Sampling", dynamic_ncols=True):
-            logits = output_logits[:, -1, :]
+            logits_step = output_logits[:, -1, :]
 
-            # CFG
+            # CFG combine → (1, V)
             if cfg_weight > 0:
-                logits_cond = logits[0:1]
-                logits_uncond = logits[1:2]
-                logits = logits_cond + cfg_weight * (logits_cond - logits_uncond)
+                cond = logits_step[0:1, :]
+                uncond = logits_step[1:2, :]
+                cfg = torch.as_tensor(cfg_weight, device=cond.device, dtype=cond.dtype)
+                logits = cond + cfg * (cond - uncond)
             else:
-                logits = logits[0:1]  # Keep batch dimension
+                logits = logits_step[0:1, :]  # Keep batch dimension
 
+            # Apply alignment stream analyzer integrity checks (disabled for streaming optimization)
+            if self.patched_model.alignment_stream_analyzer is not None:
+                if logits.dim() == 1:
+                    logits = logits.unsqueeze(0)
+                last_token = generated_ids[0, -1].item() if len(generated_ids[0]) > 0 else None
+                logits = self.patched_model.alignment_stream_analyzer.step(logits, next_token=last_token)
+
+            # Apply repetition penalty
+            ids_for_proc = generated_ids[:1, ...]   # batch = 1
+            logits = repetition_penalty_processor(ids_for_proc, logits)  # expects (B,V)
+            
             # Apply temperature scaling.
             if temperature != 1.0:
                 logits = logits / temperature
-
-            # Apply repetition penalty and top‑p filtering.
-            logits = repetition_penalty_processor(generated_ids, logits)
-            logits = top_p_warper(None, logits)
+                
+            # Apply min_p and top_p filtering
+            logits = min_p_warper(ids_for_proc, logits)
+            logits = top_p_warper(ids_for_proc, logits)
 
             # Convert logits to probabilities and sample the next token.
             probs = torch.softmax(logits, dim=-1)
@@ -444,6 +471,7 @@ class T3(nn.Module):
 
             # Check for EOS token immediately for early termination
             if next_token.view(-1) == self.hp.stop_speech_token:
+                logger.info(f"✅ EOS token detected! Stopping generation at step {i+1}")
                 break
             
             # Check for EOS token less frequently for performance after expected length
