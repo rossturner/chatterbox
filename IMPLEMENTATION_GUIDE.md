@@ -22,6 +22,54 @@ The Chatterbox Multilingual TTS server provides high-performance, zero-shot voic
 
 ---
 
+## Getting the Docker Image
+
+This implementation guide is for **this specific repository's Docker image**, which includes:
+
+- **V2 Zero-shot Voice Cloning API** (not in upstream Chatterbox)
+- **Critical CUDA graph thread affinity fix** (prevents AssertionError crashes)
+- **Reference audio conditional caching** (performance optimization)
+- **Production-ready Docker configuration**
+
+This is NOT the same as any official/upstream Chatterbox image. These features are specific to this implementation.
+
+### Option 1: Build from Source (Recommended)
+
+Clone this repository and build the image:
+
+```bash
+# Clone the repository
+git clone https://github.com/rossturner/chatterbox.git
+cd chatterbox
+
+# Checkout the streaming branch (where V2 API lives)
+git checkout streaming
+
+# Build the Docker image
+docker compose build
+
+# Verify the image was created
+docker images | grep chatterbox-tts
+```
+
+The build process takes ~5-10 minutes depending on your internet connection.
+
+### Option 2: Use Pre-built Image
+
+If a pre-built image is published to a container registry:
+
+```bash
+# Pull from Docker Hub (example - replace with actual registry)
+docker pull rossturner/chatterbox-tts:latest
+
+# Tag it locally
+docker tag rossturner/chatterbox-tts:latest chatterbox-tts:latest
+```
+
+**Note:** Check the repository README for the current published image location.
+
+---
+
 ## Docker Compose Integration
 
 ### Basic Configuration
@@ -135,18 +183,27 @@ networks:
 
 ### Starting the Service
 
-```bash
-# Pull or build the image (if not already built)
-docker compose build
+After obtaining the Docker image (see "Getting the Docker Image" section above):
 
-# Start the service
+```bash
+# Start the service (builds image if needed)
 docker compose up -d
 
-# Check logs
+# Check logs to monitor startup
 docker compose logs -f chatterbox-tts
 
-# Check health
+# Wait for service to be healthy (check logs for "Server initialization complete!")
+# Then check health endpoint
 curl http://localhost:8091/v2/health
+```
+
+If you need to rebuild the image after pulling updates:
+
+```bash
+# Rebuild and restart
+docker compose down
+docker compose build
+docker compose up -d
 ```
 
 ### Expected Startup Time
@@ -784,7 +841,8 @@ If migrating from the emotion-based V1 API:
 
 ## Support and Resources
 
-- **Docker Image**: `chatterbox-tts:latest`
+- **Repository**: https://github.com/rossturner/chatterbox (streaming branch)
+- **Docker Image**: `chatterbox-tts:latest` (build from source)
 - **Internal Port**: 8000
 - **Recommended Host Port**: 8091
 - **Health Check**: `/v2/health`
