@@ -516,8 +516,8 @@ class AudioTrimmer:
                 # Restore original tensor format if needed
                 if len(original_shape) > 1:
                     audio_1d = audio_1d.unsqueeze(0)
-                
-                return audio_1d if len(original_shape) == 1 else audio_1d.unsqueeze(0), time.time() - transcribe_start, metrics
+
+                return audio_1d, time.time() - transcribe_start, metrics
             
             # Find the end time for trimming with two-pass verification
             initial_end_time = self._find_end_time(recognized_words, intended_text, adaptive_margin)
