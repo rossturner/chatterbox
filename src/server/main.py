@@ -793,6 +793,17 @@ async def general_exception_handler(request, exc):
     )
 
 
+class HealthEndpointFilter(logging.Filter):
+    """Filter out /health endpoint requests from uvicorn access logs"""
+    
+    def filter(self, record):
+        # Filter out access log messages for /health endpoint
+        if hasattr(record, 'getMessage'):
+            message = record.getMessage()
+            return not ('GET /health' in message and 'HTTP' in message)
+        return True
+
+
 def main():
     """Main entry point"""
     # Load config to get server settings
@@ -809,12 +820,27 @@ def main():
     
     logger.info(f"Starting server on {host}:{port} with {workers} worker(s)")
     
+    # Configure logging to filter out /health endpoint access logs
+    import copy
+    log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    log_config["filters"] = {
+        "health_filter": {
+            "()": "src.server.main.HealthEndpointFilter",
+        }
+    }
+    # Ensure the access handler exists and has filters list
+    if "access" in log_config.get("handlers", {}):
+        if "filters" not in log_config["handlers"]["access"]:
+            log_config["handlers"]["access"]["filters"] = []
+        log_config["handlers"]["access"]["filters"].append("health_filter")
+    
     uvicorn.run(
         "src.server.main:app",
         host=host,
         port=port,
         workers=workers,
-        reload=False
+        reload=False,
+        log_config=log_config
     )
 
 
