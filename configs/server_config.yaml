@@ -6,8 +6,8 @@ server:
   busy_timeout: 1.0  # seconds to wait for lock
   
 model:
-  type: "grpo"  # "base", "grpo", or "quantized"
-  path: "./models/nicole_v2/lora_v2_2"  # for local models
+  type: "base"  # "base", "grpo", or "quantized"
+  path: null  # Use HuggingFace default model
   device: "cuda"
   keep_warm: true  # Keep model warm between requests
   use_optimizations: true  # Enable torch.compile and other optimizations
