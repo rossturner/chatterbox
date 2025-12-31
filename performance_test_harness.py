@@ -50,7 +50,7 @@ RANDOM_SEED = 42  # For reproducible results
 # Optimization parameters
 USE_TORCH_COMPILE = True
 USE_BFLOAT16 = True
-REDUCED_CACHE_LEN = 1200  # Reduced from 4096 for better performance
+REDUCED_CACHE_LEN = 2400  # Sized to cover observed max (2091) + buffer, prevents CUDA graph invalidation
 COMPILE_MODE = "reduce-overhead"  # or "max-autotune" for maximum optimization
 
 

@@ -33,7 +33,7 @@ class OptimizedModelLoader:
     
     # Optimization settings
     USE_BFLOAT16 = True
-    REDUCED_CACHE_LEN = 1200  # Reduced from 4096 for better performance
+    REDUCED_CACHE_LEN = 2400  # Sized to cover observed max (2091) + buffer, prevents CUDA graph invalidation
     COMPILE_MODE = "max-autotune"  # Best performance with CUDA graphs (requires thread affinity)
     
     def __init__(self, device: str = "cuda"):
