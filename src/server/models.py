@@ -6,7 +6,7 @@ from chatterbox import SUPPORTED_LANGUAGES
 
 class GenerateRequest(BaseModel):
     """Request model for speech generation"""
-    text: str = Field(..., description="Text to synthesize", min_length=1, max_length=500)
+    text: str = Field(..., description="Text to synthesize", min_length=1, max_length=1000)
     emotion: str = Field(..., description="Emotion to use for synthesis")
     temperature: Optional[float] = Field(0.8, ge=0.05, le=5.0, description="Sampling temperature")
     cfg_weight: Optional[float] = Field(0.5, ge=0.2, le=1.0, description="CFG weight/pace")
@@ -23,7 +23,7 @@ class GenerateRequest(BaseModel):
 
 class GenerateRequestV2(BaseModel):
     """Request model for zero-shot voice cloning API"""
-    text: str = Field(..., description="Text to synthesize", min_length=1, max_length=500)
+    text: str = Field(..., description="Text to synthesize", min_length=1, max_length=1000)
     language: str = Field(..., description="Language code (e.g., 'en', 'ja', 'ko')")
     reference_audio_base64: str = Field(..., description="Base64 encoded reference audio (WAV format)")
     temperature: Optional[float] = Field(0.8, ge=0.05, le=5.0, description="Sampling temperature")
