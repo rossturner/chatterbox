@@ -30,6 +30,12 @@ class GenerateRequestV2(BaseModel):
     cfg_weight: Optional[float] = Field(0.3, ge=0.0, le=1.0, description="CFG weight/pace")
     exaggeration: Optional[float] = Field(0.5, ge=0.1, le=2.0, description="Voice exaggeration factor")
     min_p: Optional[float] = Field(0.1, ge=0.0, le=1.0, description="Minimum probability threshold")
+    speed_rate: Optional[float] = Field(
+        1.0,
+        ge=0.5,
+        le=2.0,
+        description="Speed adjustment factor (0.9 = 10% slower, 1.1 = 10% faster)"
+    )
 
     @validator('text')
     def validate_text(cls, v):
