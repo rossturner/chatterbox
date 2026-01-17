@@ -189,8 +189,7 @@ def generate_speech_v2(request: GenerateRequestV2):
             temperature=request.temperature,
             cfg_weight=request.cfg_weight,
             exaggeration=request.exaggeration,
-            min_p=request.min_p,
-            speed_rate=request.speed_rate
+            min_p=request.min_p
         )
 
         # Convert to base64

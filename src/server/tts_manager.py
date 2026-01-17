@@ -172,8 +172,7 @@ class TTSManager:
         temperature: float = 0.8,
         cfg_weight: float = 0.3,
         exaggeration: float = 0.5,
-        min_p: float = 0.1,
-        speed_rate: float = 1.0
+        min_p: float = 0.1
     ) -> Tuple[torch.Tensor, float, float, str, bool]:
         """
         Generate speech using zero-shot voice cloning.
@@ -185,8 +184,6 @@ class TTSManager:
             temperature: Sampling temperature
             cfg_weight: CFG weight
             exaggeration: Voice exaggeration factor
-            min_p: Minimum probability for sampling
-            speed_rate: Tempo multiplier (0.9 = 10% slower, 1.1 = 10% faster)
 
         Returns:
             Tuple of (audio_tensor, duration, generation_time, language_used, cache_hit)
@@ -247,13 +244,6 @@ class TTSManager:
             )
 
             generation_time = time.time() - start_time
-
-            # Apply time-stretching if requested
-            if abs(speed_rate - 1.0) > 0.001:
-                from .audio_utils import time_stretch_audio
-                audio_np = audio_tensor.squeeze().cpu().numpy()
-                audio_np = time_stretch_audio(audio_np, speed_rate)
-                audio_tensor = torch.from_numpy(audio_np).unsqueeze(0)
 
             # Calculate duration
             duration = len(audio_tensor.squeeze()) / self.sample_rate
